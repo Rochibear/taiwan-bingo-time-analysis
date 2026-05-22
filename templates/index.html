@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>賓果賓果時間分析</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  </head>
+  <body>
+    <header class="toolbar">
+      <div>
+        <p class="eyebrow">Taiwan BINGO BINGO</p>
+        <h1>時間分析</h1>
+      </div>
+      <form class="run-form" action="{{ url_for('refresh') }}" method="post">
+        <label>
+          <span>最近天數</span>
+          <input name="days" type="number" min="1" value="30">
+        </label>
+        <label>
+          <span>起日</span>
+          <input name="start_date" type="date">
+        </label>
+        <label>
+          <span>迄日</span>
+          <input name="end_date" type="date">
+        </label>
+        <label>
+          <span>延遲秒數</span>
+          <input name="delay" type="number" min="0.5" step="0.1" value="1.0">
+        </label>
+        <button type="submit">抓取並分析</button>
+      </form>
+    </header>
+
+    <main>
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <section class="messages">
+            {% for category, message in messages %}
+              <p class="{{ category }}">{{ message }}</p>
+            {% endfor %}
+          </section>
+        {% endif %}
+      {% endwith %}
+
+      {% if summary %}
+        <section class="metrics">
+          <article>
+            <span>期數</span>
+            <strong>{{ summary.draw_count }}</strong>
+          </article>
+          <article>
+            <span>日期</span>
+            <strong>{{ summary.date_start }}<br>{{ summary.date_end }}</strong>
+          </article>
+          <article>
+            <span>相鄰重複平均</span>
+            <strong>{{ "%.2f"|format(summary.mean_overlap or 0) }}</strong>
+          </article>
+          <article>
+            <span>再出現中位 gap</span>
+            <strong>{{ "%.1f"|format(summary.median_gap or 0) }}</strong>
+          </article>
+        </section>
+
+        <section class="number-panels">
+          <article>
+            <h2>熱號</h2>
+            <div class="number-grid">
+              {% for item in summary.hot_numbers %}
+                <span><b>{{ "%02d"|format(item.number) }}</b>{{ item.appearances }}</span>
+              {% endfor %}
+            </div>
+          </article>
+          <article>
+            <h2>冷號</h2>
+            <div class="number-grid cold">
+              {% for item in summary.cold_numbers %}
+                <span><b>{{ "%02d"|format(item.number) }}</b>{{ item.appearances }}</span>
+              {% endfor %}
+            </div>
+          </article>
+        </section>
+
+        <section class="charts">
+          {% for chart in charts %}
+            <figure>
+              <img src="{{ url_for('output_file', filename=chart) }}" alt="{{ chart }}">
+            </figure>
+          {% endfor %}
+        </section>
+
+        <section class="periods">
+          <div>
+            <h2>FFT 高能量週期</h2>
+            <ol>
+              {% for item in summary.dominant_periods[:6] %}
+                <li><span>{{ "%.1f"|format(item.period_draws) }} 期</span><b>{{ "%.3f"|format(item.mean_power) }}</b></li>
+              {% endfor %}
+            </ol>
+          </div>
+          <form action="{{ url_for('reanalyze') }}" method="post">
+            <button type="submit">以現有 CSV 重算</button>
+          </form>
+        </section>
+      {% else %}
+        <section class="empty">
+          <h2>尚未產生分析</h2>
+          <p>先抓取來源日期，圖表會在這裡排列。</p>
+        </section>
+      {% endif %}
+    </main>
+  </body>
+</html>
+

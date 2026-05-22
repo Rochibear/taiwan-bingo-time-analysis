@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "taiwan-bingo-time-analysis"
+version = "0.1.0"
+description = "Scrape and explore time patterns in Taiwan BINGO BINGO history."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "beautifulsoup4>=4.12",
+    "flask>=3.0",
+    "gunicorn>=22.0",
+    "matplotlib>=3.8",
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+bingo-time = "bingo_analysis.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["bingo_analysis*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,7 @@
+beautifulsoup4>=4.12
+flask>=3.0
+gunicorn>=22.0
+matplotlib>=3.8
+numpy>=1.26
+pandas>=2.2
+requests>=2.31
