@@ -57,34 +57,41 @@ The Flask dashboard opens on `http://127.0.0.1:5000`. To browse it from a phone
 on the same network, use the computer's LAN address with port `5000` after the
 local firewall permits that connection.
 
-## Cloud URL with Koyeb
+## Free cloud URL with Streamlit Community Cloud
 
-This repository includes the Koyeb `Procfile` needed to run the dashboard with
-Gunicorn:
+For a free personal cloud URL, deploy `streamlit_app.py` on Streamlit Community
+Cloud:
+
+1. Sign in to Streamlit Community Cloud with GitHub.
+2. Choose **Create app**.
+3. Select this GitHub repository and the `main` branch.
+4. Set the app entrypoint to `streamlit_app.py`.
+5. Deploy and open the generated `.streamlit.app` URL.
+6. On the first cloud visit, press **抓取並分析** once to build the runtime CSV
+   and charts.
+
+The Streamlit app uses the same scraper, pandas analysis, PNG outputs, retry
+logic, and request delay as the Flask dashboard.
+
+## Optional Flask cloud host
+
+This repository also includes a `Procfile` for Flask hosts that accept a
+Gunicorn start command:
 
 ```text
 web: gunicorn --bind :$PORT --workers 1 --threads 4 --timeout 600 app:app
 ```
 
-Recommended deployment path:
-
-1. Create a GitHub repository that contains this project folder's files.
-2. Create a Koyeb account and choose **Create Service** > **Web Service**.
-3. Choose **GitHub**, select the repository and branch, and use the Python
-   buildpack option.
-4. Deploy the service and open the generated `.koyeb.app` URL.
-5. On the first cloud visit, press **抓取並分析** once if no charts exist yet.
-
-Useful environment variables:
+Useful Flask host environment variables:
 
 - `FLASK_SECRET_KEY`: a long random secret for Flask sessions.
 - `BINGO_DATA_DIR`: optional runtime folder for `bingo_history.csv` and
   generated charts.
-- `PORT`: Koyeb sets this for the Gunicorn command in `Procfile`.
+- `PORT`: the cloud host port for the Gunicorn command in `Procfile`.
 
-The generated CSV and charts are runtime data. A free cloud instance can start
-with an empty runtime filesystem after a redeploy or restart, so the dashboard
-is designed to rebuild them from the source page.
+The generated CSV and charts are runtime data. A free cloud app can start with
+an empty runtime filesystem after a redeploy or restart, so both dashboards are
+designed to rebuild them from the source page.
 
 ## Analysis notes
 

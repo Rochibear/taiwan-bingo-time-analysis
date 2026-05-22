@@ -4,6 +4,7 @@ __pycache__/
 *.pyc
 *.egg-info/
 server.*.log
+streamlit.*.log
 bingo_history.csv
 output/*.csv
 output/*.json
