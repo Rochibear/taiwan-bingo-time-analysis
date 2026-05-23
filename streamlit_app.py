@@ -209,7 +209,6 @@ def history_draw_table(limit: int = 50) -> pd.DataFrame:
 
 
 def show_history_draws() -> None:
-    st.subheader("過往開獎號碼解析")
     st.caption("完整資料仍會存成 bingo_history.csv；下方先顯示最新 50 期。")
     try:
         st.dataframe(
@@ -237,7 +236,6 @@ def show_forecast() -> None:
         st.info("預告區需要先有 bingo_history.csv。請先按「抓取並分析」。")
         return
 
-    st.subheader("預告區")
     st.warning(forecast["disclaimer"])
     area_one, area_two = st.columns(2)
 
@@ -277,43 +275,47 @@ def show_summary(summary: dict[str, Any]) -> None:
     metrics[2].metric("相鄰重複平均", f"{summary.get('mean_overlap') or 0:.2f}")
     metrics[3].metric("中位 gap", f"{summary.get('median_gap') or 0:.1f}")
 
-    show_forecast()
-    show_history_draws()
+    with st.expander("預告區", expanded=True):
+        show_forecast()
 
-    hot, cold = st.columns(2)
-    with hot:
-        st.subheader("熱號")
-        st.dataframe(
-            number_table(summary["hot_numbers"]),
-            hide_index=True,
-            use_container_width=True,
-        )
-    with cold:
-        st.subheader("冷號")
-        st.dataframe(
-            number_table(summary["cold_numbers"]),
-            hide_index=True,
-            use_container_width=True,
-        )
+    with st.expander("過往開獎號碼解析", expanded=False):
+        show_history_draws()
 
-    st.subheader("圖表")
-    for left_index in range(0, len(CHART_FILENAMES), 2):
-        chart_columns = st.columns(2)
-        for column, filename in zip(
-            chart_columns,
-            CHART_FILENAMES[left_index : left_index + 2],
-        ):
-            chart_path = OUTPUT_DIR / filename
-            if chart_path.exists():
-                column.image(str(chart_path), caption=CHART_TITLES[filename])
+    with st.expander("熱號 / 冷號", expanded=False):
+        hot, cold = st.columns(2)
+        with hot:
+            st.markdown("#### 熱號")
+            st.dataframe(
+                number_table(summary["hot_numbers"]),
+                hide_index=True,
+                use_container_width=True,
+            )
+        with cold:
+            st.markdown("#### 冷號")
+            st.dataframe(
+                number_table(summary["cold_numbers"]),
+                hide_index=True,
+                use_container_width=True,
+            )
 
-    st.subheader("FFT 高能量週期")
-    period_frame = pd.DataFrame(summary.get("dominant_periods", []))
-    if not period_frame.empty:
-        period_frame = period_frame.rename(
-            columns={"period_draws": "週期期數", "mean_power": "平均能量"}
-        )
-        st.dataframe(period_frame, hide_index=True, use_container_width=True)
+    with st.expander("圖表", expanded=False):
+        for left_index in range(0, len(CHART_FILENAMES), 2):
+            chart_columns = st.columns(2)
+            for column, filename in zip(
+                chart_columns,
+                CHART_FILENAMES[left_index : left_index + 2],
+            ):
+                chart_path = OUTPUT_DIR / filename
+                if chart_path.exists():
+                    column.image(str(chart_path), caption=CHART_TITLES[filename])
+
+    with st.expander("FFT 高能量週期", expanded=False):
+        period_frame = pd.DataFrame(summary.get("dominant_periods", []))
+        if not period_frame.empty:
+            period_frame = period_frame.rename(
+                columns={"period_draws": "週期期數", "mean_power": "平均能量"}
+            )
+            st.dataframe(period_frame, hide_index=True, use_container_width=True)
 
 
 st.set_page_config(
@@ -324,6 +326,9 @@ st.set_page_config(
 st.markdown(
     """
     <style>
+    html {
+        scroll-behavior: smooth;
+    }
     .chip-row {
         display: flex;
         flex-wrap: wrap;
@@ -339,8 +344,53 @@ st.markdown(
         min-width: 2.55rem;
         padding: 0.28rem 0.6rem;
     }
+    div[data-testid="stExpander"] {
+        border-radius: 8px;
+        margin-bottom: 0.65rem;
+    }
+    div[data-testid="stExpander"] details summary p {
+        font-size: 1rem;
+        font-weight: 800;
+    }
+    .back-to-top {
+        align-items: center;
+        background: #0f172a;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 999px;
+        bottom: 18px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+        color: #ffffff !important;
+        display: inline-flex;
+        font-size: 0.78rem;
+        font-weight: 800;
+        height: 2.75rem;
+        justify-content: center;
+        letter-spacing: 0;
+        position: fixed;
+        right: 18px;
+        text-decoration: none !important;
+        width: 2.75rem;
+        z-index: 9999;
+    }
+    .back-to-top:hover {
+        background: #1f2937;
+        color: #ffffff !important;
+        text-decoration: none !important;
+    }
+    @media (max-width: 640px) {
+        .back-to-top {
+            bottom: 14px;
+            height: 2.5rem;
+            right: 14px;
+            width: 2.5rem;
+        }
+    }
     </style>
     """,
+    unsafe_allow_html=True,
+)
+st.markdown(
+    '<div id="page-top"></div><a class="back-to-top" href="#page-top">TOP</a>',
     unsafe_allow_html=True,
 )
 st.title("賓果賓果時間分析")
