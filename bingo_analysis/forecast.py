@@ -179,6 +179,98 @@ def build_star_selection(
     }
 
 
+def _as_taipei_datetime(value: object) -> datetime:
+    timestamp = pd.Timestamp(value)
+    if timestamp.tzinfo is None:
+        return timestamp.to_pydatetime().replace(tzinfo=TAIPEI_TZ)
+    return timestamp.tz_convert(TAIPEI_TZ).to_pydatetime()
+
+
+def backtest_star_selection(
+    history: pd.DataFrame,
+    stars: int,
+    evaluation_draws: int = 300,
+    min_training_draws: int = 300,
+    verified_draw_ids: set[str] | None = None,
+) -> dict[str, object]:
+    if history.empty:
+        raise ValueError("history is empty")
+    if not STAR_MIN <= stars <= STAR_MAX:
+        raise ValueError("stars must be between 1 and 10")
+    if evaluation_draws < 1:
+        raise ValueError("evaluation_draws must be positive")
+
+    ordered = history.sort_values(["datetime", "draw_id"]).reset_index(drop=True)
+    if len(ordered) <= min_training_draws:
+        raise ValueError(
+            f"need more than {min_training_draws} draws for backtesting"
+        )
+
+    candidate_indices = list(range(min_training_draws, len(ordered)))
+    if verified_draw_ids is not None:
+        verified = {str(draw_id) for draw_id in verified_draw_ids}
+        candidate_indices = [
+            index
+            for index in candidate_indices
+            if str(ordered.at[index, "draw_id"]) in verified
+        ]
+    candidate_indices = candidate_indices[-evaluation_draws:]
+
+    full_matrix = build_appearance_matrix(ordered)
+    rows: list[dict[str, object]] = []
+    for index in candidate_indices:
+        training = ordered.iloc[:index]
+        training_matrix = full_matrix.iloc[:index]
+        target = ordered.iloc[index]
+        ranked = scored_numbers(
+            training,
+            training_matrix,
+            _as_taipei_datetime(target["datetime"]),
+        )
+        selected = sorted(int(number) for number in ranked.head(stars)["number"])
+        actual = {int(number) for number in target["numbers"]}
+        hits = sorted(number for number in selected if number in actual)
+        rows.append(
+            {
+                "draw_id": str(target["draw_id"]),
+                "date": str(target["date"]),
+                "time": str(target["time"]),
+                "selected_numbers": selected,
+                "hit_numbers": hits,
+                "hit_count": len(hits),
+            }
+        )
+
+    details = pd.DataFrame(rows)
+    if details.empty:
+        summary = {
+            "stars": stars,
+            "checked_count": 0,
+            "mean_hits": 0.0,
+            "hit_rate": 0.0,
+            "zero_hit_rate": 0.0,
+            "full_hit_rate": 0.0,
+            "random_mean_hits": stars * 0.25,
+            "lift_vs_random": None,
+        }
+        return {"summary": summary, "details": details}
+
+    hit_counts = details["hit_count"].astype(int)
+    random_mean_hits = stars * 20 / 80
+    mean_hits = float(hit_counts.mean())
+    summary = {
+        "stars": stars,
+        "checked_count": int(len(details)),
+        "mean_hits": mean_hits,
+        "hit_rate": float((hit_counts > 0).mean()),
+        "zero_hit_rate": float((hit_counts == 0).mean()),
+        "full_hit_rate": float((hit_counts == stars).mean()),
+        "random_mean_hits": float(random_mean_hits),
+        "lift_vs_random": mean_hits / random_mean_hits if random_mean_hits else None,
+    }
+    return {"summary": summary, "details": details}
+
+
 def consecutive_pairs(numbers: list[int]) -> list[dict[str, object]]:
     number_set = set(numbers)
     pairs: list[dict[str, object]] = []

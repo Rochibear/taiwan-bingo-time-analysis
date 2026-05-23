@@ -21,6 +21,11 @@ from bingo_analysis.analysis import (
     build_appearance_matrix,
     load_history,
 )
+from bingo_analysis.official import (
+    OFFICIAL_NOTE,
+    OfficialConfig,
+    verify_history_with_official,
+)
 from bingo_analysis.pipeline import analyze_existing, run_pipeline
 from bingo_analysis.scraper import ScrapeConfig
 
@@ -28,12 +33,15 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("BINGO_DATA_DIR", PROJECT_ROOT))
 OUTPUT_DIR = DATA_DIR / "output"
 SUMMARY_PATH = OUTPUT_DIR / "analysis_summary.json"
+OFFICIAL_SUMMARY_PATH = OUTPUT_DIR / "official_verification_summary.json"
+OFFICIAL_DETAILS_PATH = OUTPUT_DIR / "official_verification.csv"
 ANALYZE_COOLDOWN_KEY = "analyze_cooldown_until"
 ANALYZE_COOLDOWN_SECONDS = 3
 TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 STAR_MIN = getattr(forecast_module, "STAR_MIN", 1)
 STAR_MAX = getattr(forecast_module, "STAR_MAX", 10)
 build_forecast = forecast_module.build_forecast
+backtest_star_selection = getattr(forecast_module, "backtest_star_selection", None)
 
 CHART_TITLES = {
     "number_frequency.png": "1-80 號碼出現次數",
@@ -63,6 +71,13 @@ def load_summary() -> dict[str, Any] | None:
     if not SUMMARY_PATH.exists():
         return None
     with SUMMARY_PATH.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def load_official_summary() -> dict[str, Any] | None:
+    if not OFFICIAL_SUMMARY_PATH.exists():
+        return None
+    with OFFICIAL_SUMMARY_PATH.open("r", encoding="utf-8") as handle:
         return json.load(handle)
 
 
@@ -220,6 +235,28 @@ def star_selection_table(items: list[dict[str, Any]]) -> pd.DataFrame:
     return frame
 
 
+def backtest_table(details: pd.DataFrame) -> pd.DataFrame:
+    if details.empty:
+        return details
+    frame = details.copy()
+    frame["selected_numbers"] = frame["selected_numbers"].map(
+        lambda numbers: " ".join(f"{int(number):02d}" for number in numbers)
+    )
+    frame["hit_numbers"] = frame["hit_numbers"].map(
+        lambda numbers: " ".join(f"{int(number):02d}" for number in numbers) or "－"
+    )
+    return frame.rename(
+        columns={
+            "draw_id": "期別",
+            "date": "開獎日期",
+            "time": "開獎時間",
+            "selected_numbers": "建議號碼",
+            "hit_numbers": "命中號碼",
+            "hit_count": "命中數",
+        }
+    )
+
+
 def normalize_scores(values: np.ndarray) -> np.ndarray:
     values = np.asarray(values, dtype=float)
     total = values.sum()
@@ -348,6 +385,164 @@ def show_history_draws() -> None:
         st.info(f"尚無可顯示的過往開獎解析：{exc}")
 
 
+def official_status_table(details: pd.DataFrame) -> pd.DataFrame:
+    if details.empty:
+        return details
+    frame = details.copy()
+    frame["status"] = frame["status"].map(
+        {
+            "verified": "通過",
+            "mismatch": "不一致",
+            "pending_official": "官方尚未更新",
+        }
+    ).fillna(frame["status"])
+    return frame.rename(
+        columns={
+            "draw_id": "期別",
+            "date": "開獎日期",
+            "time": "開獎時間",
+            "status": "校驗狀態",
+            "mismatch_fields": "不一致欄位",
+        }
+    )
+
+
+def show_official_verification() -> None:
+    st.caption(OFFICIAL_NOTE)
+    force_refresh = st.checkbox("重新下載官方年度檔", value=False)
+    if st.button("執行官方資料校驗", use_container_width=True):
+        try:
+            with st.spinner("下載官方年度資料並比對中..."):
+                result = verify_history_with_official(
+                    DATA_DIR,
+                    config=OfficialConfig(delay_seconds=1.0),
+                    force_refresh=force_refresh,
+                )
+            st.success(
+                "官方校驗完成："
+                f"{result.summary['verified_count']} 通過，"
+                f"{result.summary['mismatch_count']} 不一致，"
+                f"{result.summary['pending_official_count']} 尚待官方更新。"
+            )
+        except Exception as exc:
+            st.error(str(exc))
+
+    summary = load_official_summary()
+    if not summary:
+        st.info("尚未執行官方資料校驗。")
+        return
+
+    metrics = st.columns(4)
+    metrics[0].metric("官方最新日期", summary.get("latest_official_date") or "－")
+    metrics[1].metric("校驗通過", summary.get("verified_count", 0))
+    metrics[2].metric("不一致", summary.get("mismatch_count", 0))
+    metrics[3].metric("官方尚未更新", summary.get("pending_official_count", 0))
+
+    verification_rate = summary.get("verification_rate")
+    if verification_rate is not None:
+        st.caption(f"可比對資料通過率：{verification_rate:.2%}")
+
+    if OFFICIAL_DETAILS_PATH.exists():
+        details = pd.read_csv(OFFICIAL_DETAILS_PATH, dtype={"draw_id": "string"})
+        focus = details[details["status"] != "verified"].tail(100)
+        if focus.empty:
+            focus = details.tail(100)
+        st.dataframe(
+            official_status_table(focus),
+            hide_index=True,
+            use_container_width=True,
+        )
+        st.download_button(
+            "下載官方校驗明細 CSV",
+            data=OFFICIAL_DETAILS_PATH.read_bytes(),
+            file_name="official_verification.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+
+def verified_draw_ids_from_details() -> set[str] | None:
+    if not OFFICIAL_DETAILS_PATH.exists():
+        return None
+    details = pd.read_csv(OFFICIAL_DETAILS_PATH, dtype={"draw_id": "string"})
+    verified = details.loc[details["status"] == "verified", "draw_id"].dropna()
+    if verified.empty:
+        return None
+    return set(verified.astype(str))
+
+
+def show_prediction_backtest() -> None:
+    if backtest_star_selection is None:
+        st.info("目前版本尚未載入回測模組，請等待 Streamlit Cloud 重新部署。")
+        return
+
+    try:
+        history = load_history(DATA_DIR / "bingo_history.csv")
+    except Exception:
+        st.info("預測回測需要先有 bingo_history.csv。請先按「抓取並分析」。")
+        return
+
+    controls = st.columns(2)
+    with controls[0]:
+        star_options = list(range(STAR_MAX, STAR_MIN - 1, -1))
+        selected_stars = st.selectbox(
+            "回測星數",
+            options=star_options,
+            format_func=lambda stars: STAR_LABELS[stars],
+            key="backtest_star_count",
+        )
+    with controls[1]:
+        evaluation_draws = st.slider(
+            "回測最近期數",
+            min_value=50,
+            max_value=500,
+            value=300,
+            step=50,
+        )
+
+    verified_ids = verified_draw_ids_from_details()
+    use_verified_only = False
+    if verified_ids:
+        use_verified_only = st.checkbox(
+            "只回測官方已通過校驗的期數",
+            value=True,
+        )
+    else:
+        st.caption("尚未有官方校驗明細；此處先使用本機歷史資料回測。")
+
+    try:
+        result = backtest_star_selection(
+            history,
+            stars=selected_stars,
+            evaluation_draws=evaluation_draws,
+            verified_draw_ids=verified_ids if use_verified_only else None,
+        )
+    except Exception as exc:
+        st.info(f"目前無法產生回測：{exc}")
+        return
+
+    summary = result["summary"]
+    metrics = st.columns(4)
+    metrics[0].metric("回測期數", summary["checked_count"])
+    metrics[1].metric("平均命中", f"{summary['mean_hits']:.2f}")
+    metrics[2].metric("至少中 1 號", f"{summary['hit_rate']:.2%}")
+    metrics[3].metric("零命中", f"{summary['zero_hit_rate']:.2%}")
+
+    lift = summary.get("lift_vs_random")
+    lift_label = f"{lift:.2f}x" if lift is not None else "－"
+    st.caption(
+        f"同星數隨機平均命中約 {summary['random_mean_hits']:.2f}；"
+        f"模型相對隨機平均命中：{lift_label}。"
+    )
+
+    details = result["details"]
+    st.dataframe(
+        backtest_table(details.tail(50)),
+        hide_index=True,
+        use_container_width=True,
+    )
+
+
 def show_star_selection(history: pd.DataFrame) -> None:
     st.markdown("#### 建議選號區")
     star_options = list(range(STAR_MAX, STAR_MIN - 1, -1))
@@ -428,6 +623,12 @@ def show_summary(summary: dict[str, Any]) -> None:
 
     with st.expander("過往開獎號碼解析", expanded=False):
         show_history_draws()
+
+    with st.expander("官方資料校驗", expanded=False):
+        show_official_verification()
+
+    with st.expander("預測回測", expanded=False):
+        show_prediction_backtest()
 
     with st.expander("熱號 / 冷號", expanded=False):
         hot, cold = st.columns(2)

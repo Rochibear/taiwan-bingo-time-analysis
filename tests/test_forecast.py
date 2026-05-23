@@ -4,7 +4,12 @@ from zoneinfo import ZoneInfo
 import pytest
 import pandas as pd
 
-from bingo_analysis.forecast import build_forecast, build_star_selection, next_draw_datetime
+from bingo_analysis.forecast import (
+    backtest_star_selection,
+    build_forecast,
+    build_star_selection,
+    next_draw_datetime,
+)
 
 
 def sample_history(draws: int = 40) -> pd.DataFrame:
@@ -64,3 +69,24 @@ def test_build_star_selection_uses_requested_star_count() -> None:
 def test_build_star_selection_rejects_out_of_range_stars() -> None:
     with pytest.raises(ValueError, match="between 1 and 10"):
         build_star_selection(sample_history(), stars=11)
+
+
+def test_backtest_star_selection_reports_hit_metrics() -> None:
+    result = backtest_star_selection(
+        sample_history(80),
+        stars=5,
+        evaluation_draws=10,
+        min_training_draws=20,
+    )
+
+    assert result["summary"]["checked_count"] == 10
+    assert result["summary"]["stars"] == 5
+    assert result["summary"]["random_mean_hits"] == pytest.approx(1.25)
+    assert set(result["details"].columns) == {
+        "draw_id",
+        "date",
+        "time",
+        "selected_numbers",
+        "hit_numbers",
+        "hit_count",
+    }
