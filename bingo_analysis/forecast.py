@@ -14,6 +14,8 @@ DRAW_START_MINUTE = 7 * 60 + 5
 DRAW_END_MINUTE = 23 * 60 + 55
 DRAW_INTERVAL_MINUTES = 5
 RECENT_WINDOW_DRAWS = 300
+STAR_MIN = 1
+STAR_MAX = 10
 
 DISCLAIMER = (
     "免責聲明：本預告區只用歷史資料做統計與娛樂性候選，"
@@ -93,6 +95,88 @@ def _weighted_prediction(
     rng = np.random.default_rng(_stable_seed(history, next_draw_at))
     selected = rng.choice(NUMBERS, size=20, replace=False, p=weights)
     return sorted(int(number) for number in selected)
+
+
+def _current_gaps(matrix: pd.DataFrame) -> np.ndarray:
+    gaps: list[int] = []
+    for number in NUMBERS:
+        appearances = np.flatnonzero(matrix[number].to_numpy())
+        if len(appearances) == 0:
+            gaps.append(len(matrix))
+        else:
+            gaps.append(len(matrix) - 1 - int(appearances[-1]))
+    return np.asarray(gaps, dtype=float)
+
+
+def scored_numbers(
+    history: pd.DataFrame,
+    matrix: pd.DataFrame,
+    next_draw_at: datetime,
+) -> pd.DataFrame:
+    global_counts = matrix.sum(axis=0).reindex(NUMBERS).to_numpy(dtype=float) + 1.0
+    recent = matrix.tail(min(RECENT_WINDOW_DRAWS, len(matrix)))
+    recent_counts = recent.sum(axis=0).reindex(NUMBERS).to_numpy(dtype=float) + 1.0
+
+    hour_mask = history["datetime"].dt.hour == next_draw_at.hour
+    if hour_mask.any():
+        hourly_counts = (
+            matrix.loc[hour_mask].sum(axis=0).reindex(NUMBERS).to_numpy(dtype=float)
+            + 1.0
+        )
+        hourly_draws = int(hour_mask.sum())
+    else:
+        hourly_counts = global_counts.copy()
+        hourly_draws = len(history)
+
+    current_gaps = _current_gaps(matrix)
+    gap_score = np.log1p(current_gaps) + 1.0
+    score = (
+        0.45 * _normalize(global_counts)
+        + 0.30 * _normalize(recent_counts)
+        + 0.15 * _normalize(hourly_counts)
+        + 0.10 * _normalize(gap_score)
+    )
+
+    frame = pd.DataFrame(
+        {
+            "number": NUMBERS,
+            "score": score,
+            "global_rate": (global_counts - 1.0) / max(len(history), 1),
+            "recent_rate": (recent_counts - 1.0) / max(len(recent), 1),
+            "hourly_rate": (hourly_counts - 1.0) / max(hourly_draws, 1),
+            "current_gap": current_gaps.astype(int),
+        }
+    )
+    return frame.sort_values(["score", "number"], ascending=[False, True]).reset_index(
+        drop=True
+    )
+
+
+def build_star_selection(
+    history: pd.DataFrame,
+    stars: int,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    if history.empty:
+        raise ValueError("history is empty")
+    if not STAR_MIN <= stars <= STAR_MAX:
+        raise ValueError("stars must be between 1 and 10")
+
+    next_draw_at = next_draw_datetime(now)
+    matrix = build_appearance_matrix(history)
+    ranked = scored_numbers(history, matrix, next_draw_at)
+    selected = ranked.head(stars).copy()
+    selected_numbers = sorted(int(number) for number in selected["number"].tolist())
+
+    return {
+        "stars": stars,
+        "next_draw_at": next_draw_at.isoformat(),
+        "next_draw_label": next_draw_at.strftime("%Y-%m-%d %H:%M"),
+        "selected_numbers": selected_numbers,
+        "selected_details": selected.to_dict(orient="records"),
+        "model_note": "全期頻率 45% + 近期頻率 30% + 同小時偏號 15% + 近期 gap 10%",
+        "disclaimer": DISCLAIMER,
+    }
 
 
 def consecutive_pairs(numbers: list[int]) -> list[dict[str, object]]:

@@ -14,7 +14,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from bingo_analysis.analysis import CHART_FILENAMES, load_history
-from bingo_analysis.forecast import build_forecast
+from bingo_analysis.forecast import STAR_MAX, STAR_MIN, build_forecast, build_star_selection
 from bingo_analysis.pipeline import analyze_existing, run_pipeline
 from bingo_analysis.scraper import ScrapeConfig
 
@@ -34,6 +34,19 @@ CHART_TITLES = {
     "weekday_heatmap.png": "星期別偏號",
     "autocorrelation.png": "自相關",
     "fft_periodogram.png": "FFT 週期分析",
+}
+
+STAR_LABELS = {
+    10: "十星（10 個號碼）",
+    9: "九星（9 個號碼）",
+    8: "八星（8 個號碼）",
+    7: "七星（7 個號碼）",
+    6: "六星（6 個號碼）",
+    5: "五星（5 個號碼）",
+    4: "四星（4 個號碼）",
+    3: "三星（3 個號碼）",
+    2: "二星（2 個號碼）",
+    1: "一星（1 個號碼）",
 }
 
 
@@ -177,6 +190,27 @@ def pair_table(items: list[dict[str, Any]]) -> pd.DataFrame:
     return frame
 
 
+def star_selection_table(items: list[dict[str, Any]]) -> pd.DataFrame:
+    frame = pd.DataFrame(items)
+    if frame.empty:
+        return frame
+    frame = frame.rename(
+        columns={
+            "number": "號碼",
+            "score": "綜合分數",
+            "global_rate": "全期率",
+            "recent_rate": "近期率",
+            "hourly_rate": "同小時率",
+            "current_gap": "目前 gap",
+        }
+    )
+    frame["號碼"] = frame["號碼"].map(lambda value: f"{int(value):02d}")
+    frame["綜合分數"] = frame["綜合分數"].map(lambda value: f"{value:.5f}")
+    for column in ["全期率", "近期率", "同小時率"]:
+        frame[column] = frame[column].map(lambda value: f"{value:.2%}")
+    return frame
+
+
 def history_draw_table(limit: int = 50) -> pd.DataFrame:
     history = load_history(DATA_DIR / "bingo_history.csv")
     frame = history.sort_values(["datetime", "draw_id"], ascending=False).head(limit)
@@ -229,9 +263,35 @@ def show_history_draws() -> None:
         st.info(f"尚無可顯示的過往開獎解析：{exc}")
 
 
+def show_star_selection(history: pd.DataFrame) -> None:
+    st.markdown("#### 建議選號區")
+    star_options = list(range(STAR_MAX, STAR_MIN - 1, -1))
+    selected_stars = st.selectbox(
+        "選擇星數",
+        options=star_options,
+        format_func=lambda stars: STAR_LABELS[stars],
+        key="star_selection_count",
+    )
+    selection = build_star_selection(history, selected_stars)
+    st.caption(
+        f"80 選 {selected_stars}｜推定下一期時間：{selection['next_draw_label']}"
+    )
+    st.markdown(
+        chip_list(selection["selected_numbers"], "#6366f1"),
+        unsafe_allow_html=True,
+    )
+    st.caption(f"模型：{selection['model_note']}")
+    st.dataframe(
+        star_selection_table(selection["selected_details"]),
+        hide_index=True,
+        use_container_width=True,
+    )
+
+
 def show_forecast() -> None:
     try:
-        forecast = build_forecast(load_history(DATA_DIR / "bingo_history.csv"))
+        history = load_history(DATA_DIR / "bingo_history.csv")
+        forecast = build_forecast(history)
     except Exception:
         st.info("預告區需要先有 bingo_history.csv。請先按「抓取並分析」。")
         return
@@ -264,6 +324,9 @@ def show_forecast() -> None:
             hide_index=True,
             use_container_width=True,
         )
+
+    st.divider()
+    show_star_selection(history)
 
 
 def show_summary(summary: dict[str, Any]) -> None:
