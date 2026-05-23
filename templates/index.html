@@ -64,6 +64,42 @@
           </article>
         </section>
 
+        {% if forecast %}
+          <section class="forecast">
+            <article>
+              <h2>預告區 1：下一期候選號碼</h2>
+              <p class="forecast-time">推定下一期時間：{{ forecast.next_draw_label }}</p>
+              <div class="forecast-grid">
+                {% for number in forecast.predicted_numbers %}
+                  <span>{{ "%02d"|format(number) }}</span>
+                {% endfor %}
+              </div>
+              <p class="model-note">{{ forecast.model_note }}</p>
+            </article>
+            <article>
+              <h2>預告區 2：預測連號</h2>
+              {% if forecast.consecutive_in_prediction %}
+                <p class="forecast-time">區域 1 號碼內形成的連號</p>
+                <div class="pair-grid">
+                  {% for pair in forecast.consecutive_in_prediction %}
+                    <span>{{ pair.label }}</span>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <p class="forecast-time">區域 1 本次沒有形成連號，改看模型連號候選。</p>
+              {% endif %}
+              <ol class="pair-list">
+                {% for pair in forecast.consecutive_candidates[:6] %}
+                  <li><span>{{ pair.label }}</span><b>{{ pair.history_count }} 次</b></li>
+                {% endfor %}
+              </ol>
+            </article>
+          </section>
+          <section class="disclaimer">
+            <p>{{ forecast.disclaimer }}</p>
+          </section>
+        {% endif %}
+
         <section class="number-panels">
           <article>
             <h2>熱號</h2>
@@ -113,4 +149,3 @@
     </main>
   </body>
 </html>
-

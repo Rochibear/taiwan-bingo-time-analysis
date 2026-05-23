@@ -8,7 +8,8 @@ from typing import Any
 
 from flask import Flask, flash, redirect, render_template, request, send_from_directory, url_for
 
-from bingo_analysis.analysis import CHART_FILENAMES
+from bingo_analysis.analysis import CHART_FILENAMES, load_history
+from bingo_analysis.forecast import build_forecast
 from bingo_analysis.pipeline import analyze_existing, run_pipeline
 from bingo_analysis.scraper import ScrapeConfig
 
@@ -35,12 +36,23 @@ def parse_optional_date(raw: str) -> date | None:
 @app.get("/")
 def dashboard() -> str:
     summary = load_summary()
+    forecast = None
     charts = [
         filename
         for filename in CHART_FILENAMES
         if (OUTPUT_DIR / filename).exists()
     ]
-    return render_template("index.html", summary=summary, charts=charts)
+    if summary and (DATA_DIR / "bingo_history.csv").exists():
+        try:
+            forecast = build_forecast(load_history(DATA_DIR / "bingo_history.csv"))
+        except Exception:
+            forecast = None
+    return render_template(
+        "index.html",
+        summary=summary,
+        charts=charts,
+        forecast=forecast,
+    )
 
 
 @app.post("/refresh")

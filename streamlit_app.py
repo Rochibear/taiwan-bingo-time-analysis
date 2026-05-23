@@ -8,7 +8,8 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from bingo_analysis.analysis import CHART_FILENAMES
+from bingo_analysis.analysis import CHART_FILENAMES, load_history
+from bingo_analysis.forecast import build_forecast
 from bingo_analysis.pipeline import analyze_existing, run_pipeline
 from bingo_analysis.scraper import ScrapeConfig
 
@@ -51,6 +52,76 @@ def number_table(items: list[dict[str, Any]]) -> pd.DataFrame:
     return frame
 
 
+def chip_list(numbers: list[int], accent: str = "#0ea5a3") -> str:
+    chips = "".join(
+        f"<span class='number-chip' style='border-color:{accent}'>{number:02d}</span>"
+        for number in numbers
+    )
+    return f"<div class='chip-row'>{chips}</div>"
+
+
+def label_chip_list(labels: list[str], accent: str = "#f59e0b") -> str:
+    chips = "".join(
+        f"<span class='number-chip' style='border-color:{accent}'>{label}</span>"
+        for label in labels
+    )
+    return f"<div class='chip-row'>{chips}</div>"
+
+
+def pair_table(items: list[dict[str, Any]]) -> pd.DataFrame:
+    frame = pd.DataFrame(items)
+    if frame.empty:
+        return frame
+    keep_columns = ["label", "history_count", "score"]
+    frame = frame[keep_columns].rename(
+        columns={
+            "label": "連號",
+            "history_count": "歷史同開次數",
+            "score": "模型分數",
+        }
+    )
+    frame["模型分數"] = frame["模型分數"].map(lambda value: f"{value:.4f}")
+    return frame
+
+
+def show_forecast() -> None:
+    try:
+        forecast = build_forecast(load_history(DATA_DIR / "bingo_history.csv"))
+    except Exception:
+        st.info("預告區需要先有 bingo_history.csv。請先按「抓取並分析」。")
+        return
+
+    st.subheader("預告區")
+    st.warning(forecast["disclaimer"])
+    area_one, area_two = st.columns(2)
+
+    with area_one:
+        st.markdown("#### 區域 1：下一期候選號碼")
+        st.caption(f"推定下一期時間：{forecast['next_draw_label']}")
+        st.markdown(
+            chip_list(forecast["predicted_numbers"], "#0ea5a3"),
+            unsafe_allow_html=True,
+        )
+        st.caption(f"模型：{forecast['model_note']}")
+
+    with area_two:
+        st.markdown("#### 區域 2：預測連號")
+        predicted_pairs = forecast["consecutive_in_prediction"]
+        if predicted_pairs:
+            st.caption("區域 1 號碼內形成的連號")
+            st.markdown(
+                label_chip_list([pair["label"] for pair in predicted_pairs]),
+                unsafe_allow_html=True,
+            )
+        else:
+            st.caption("區域 1 本次沒有形成連號，改看模型連號候選。")
+        st.dataframe(
+            pair_table(forecast["consecutive_candidates"]),
+            hide_index=True,
+            use_container_width=True,
+        )
+
+
 def show_summary(summary: dict[str, Any]) -> None:
     metrics = st.columns(4)
     metrics[0].metric("期數", summary["draw_count"])
@@ -59,6 +130,8 @@ def show_summary(summary: dict[str, Any]) -> None:
         st.markdown(f"**{summary['date_start']}**  \n**{summary['date_end']}**")
     metrics[2].metric("相鄰重複平均", f"{summary.get('mean_overlap') or 0:.2f}")
     metrics[3].metric("中位 gap", f"{summary.get('median_gap') or 0:.1f}")
+
+    show_forecast()
 
     hot, cold = st.columns(2)
     with hot:
@@ -100,6 +173,28 @@ st.set_page_config(
     page_title="賓果賓果時間分析",
     page_icon=":bar_chart:",
     layout="wide",
+)
+st.markdown(
+    """
+    <style>
+    .chip-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+        margin: 0.65rem 0 0.85rem;
+    }
+    .number-chip {
+        border: 1px solid;
+        border-radius: 999px;
+        display: inline-flex;
+        font-weight: 800;
+        justify-content: center;
+        min-width: 2.55rem;
+        padding: 0.28rem 0.6rem;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 st.title("賓果賓果時間分析")
 st.caption("台灣 BINGO BINGO 歷史資料探索。圖表是診斷工具，不是未來開獎保證。")
