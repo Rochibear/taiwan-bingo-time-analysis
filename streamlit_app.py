@@ -366,9 +366,9 @@ st.markdown(
         justify-content: center;
         letter-spacing: 0;
         position: fixed;
-        right: 96px;
+        right: 18px;
         text-decoration: none !important;
-        top: 18px;
+        top: 33vh;
         width: 2.75rem;
         z-index: 9999;
     }
@@ -380,8 +380,8 @@ st.markdown(
     @media (max-width: 640px) {
         .back-to-top {
             height: 2.5rem;
-            right: 76px;
-            top: 12px;
+            right: 12px;
+            top: 34vh;
             width: 2.5rem;
         }
     }
