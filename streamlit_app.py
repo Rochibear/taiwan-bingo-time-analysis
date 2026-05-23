@@ -9,12 +9,18 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-from bingo_analysis.analysis import CHART_FILENAMES, load_history
-from bingo_analysis.forecast import STAR_MAX, STAR_MIN, build_forecast, build_star_selection
+from bingo_analysis import forecast as forecast_module
+from bingo_analysis.analysis import (
+    CHART_FILENAMES,
+    NUMBERS,
+    build_appearance_matrix,
+    load_history,
+)
 from bingo_analysis.pipeline import analyze_existing, run_pipeline
 from bingo_analysis.scraper import ScrapeConfig
 
@@ -25,6 +31,9 @@ SUMMARY_PATH = OUTPUT_DIR / "analysis_summary.json"
 ANALYZE_COOLDOWN_KEY = "analyze_cooldown_until"
 ANALYZE_COOLDOWN_SECONDS = 3
 TAIPEI_TZ = ZoneInfo("Asia/Taipei")
+STAR_MIN = getattr(forecast_module, "STAR_MIN", 1)
+STAR_MAX = getattr(forecast_module, "STAR_MAX", 10)
+build_forecast = forecast_module.build_forecast
 
 CHART_TITLES = {
     "number_frequency.png": "1-80 號碼出現次數",
@@ -209,6 +218,82 @@ def star_selection_table(items: list[dict[str, Any]]) -> pd.DataFrame:
     for column in ["全期率", "近期率", "同小時率"]:
         frame[column] = frame[column].map(lambda value: f"{value:.2%}")
     return frame
+
+
+def normalize_scores(values: np.ndarray) -> np.ndarray:
+    values = np.asarray(values, dtype=float)
+    total = values.sum()
+    if total <= 0:
+        return np.ones_like(values, dtype=float) / len(values)
+    return values / total
+
+
+def fallback_star_selection(history: pd.DataFrame, stars: int) -> dict[str, object]:
+    if not STAR_MIN <= stars <= STAR_MAX:
+        raise ValueError("stars must be between 1 and 10")
+
+    next_draw_at = forecast_module.next_draw_datetime()
+    matrix = build_appearance_matrix(history)
+    global_counts = matrix.sum(axis=0).reindex(NUMBERS).to_numpy(dtype=float) + 1.0
+    recent_window = getattr(forecast_module, "RECENT_WINDOW_DRAWS", 300)
+    recent = matrix.tail(min(recent_window, len(matrix)))
+    recent_counts = recent.sum(axis=0).reindex(NUMBERS).to_numpy(dtype=float) + 1.0
+
+    hour_mask = history["datetime"].dt.hour == next_draw_at.hour
+    if hour_mask.any():
+        hourly_counts = (
+            matrix.loc[hour_mask].sum(axis=0).reindex(NUMBERS).to_numpy(dtype=float)
+            + 1.0
+        )
+        hourly_draws = int(hour_mask.sum())
+    else:
+        hourly_counts = global_counts.copy()
+        hourly_draws = len(history)
+
+    current_gaps: list[int] = []
+    for number in NUMBERS:
+        appearances = np.flatnonzero(matrix[number].to_numpy())
+        current_gaps.append(
+            len(matrix)
+            if len(appearances) == 0
+            else len(matrix) - 1 - int(appearances[-1])
+        )
+    current_gap_values = np.asarray(current_gaps, dtype=float)
+    gap_score = np.log1p(current_gap_values) + 1.0
+    score = (
+        0.45 * normalize_scores(global_counts)
+        + 0.30 * normalize_scores(recent_counts)
+        + 0.15 * normalize_scores(hourly_counts)
+        + 0.10 * normalize_scores(gap_score)
+    )
+
+    ranked = pd.DataFrame(
+        {
+            "number": NUMBERS,
+            "score": score,
+            "global_rate": (global_counts - 1.0) / max(len(history), 1),
+            "recent_rate": (recent_counts - 1.0) / max(len(recent), 1),
+            "hourly_rate": (hourly_counts - 1.0) / max(hourly_draws, 1),
+            "current_gap": current_gap_values.astype(int),
+        }
+    ).sort_values(["score", "number"], ascending=[False, True])
+    selected = ranked.head(stars).copy()
+    return {
+        "stars": stars,
+        "next_draw_label": next_draw_at.strftime("%Y-%m-%d %H:%M"),
+        "selected_numbers": sorted(
+            int(number) for number in selected["number"].tolist()
+        ),
+        "selected_details": selected.to_dict(orient="records"),
+        "model_note": "全期頻率 45% + 近期頻率 30% + 同小時偏號 15% + 近期 gap 10%",
+    }
+
+
+def build_star_selection(history: pd.DataFrame, stars: int) -> dict[str, object]:
+    builder = getattr(forecast_module, "build_star_selection", None)
+    if builder:
+        return builder(history, stars)
+    return fallback_star_selection(history, stars)
 
 
 def history_draw_table(limit: int = 50) -> pd.DataFrame:
