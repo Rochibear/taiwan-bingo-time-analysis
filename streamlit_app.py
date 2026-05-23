@@ -357,7 +357,6 @@ st.markdown(
         background: #0f172a;
         border: 1px solid rgba(255, 255, 255, 0.2);
         border-radius: 999px;
-        bottom: 18px;
         box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
         color: #ffffff !important;
         display: inline-flex;
@@ -367,8 +366,9 @@ st.markdown(
         justify-content: center;
         letter-spacing: 0;
         position: fixed;
-        right: 18px;
+        right: 96px;
         text-decoration: none !important;
+        top: 18px;
         width: 2.75rem;
         z-index: 9999;
     }
@@ -379,9 +379,9 @@ st.markdown(
     }
     @media (max-width: 640px) {
         .back-to-top {
-            bottom: 14px;
             height: 2.5rem;
-            right: 14px;
+            right: 76px;
+            top: 12px;
             width: 2.5rem;
         }
     }
