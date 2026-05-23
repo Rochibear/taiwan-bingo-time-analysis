@@ -54,40 +54,74 @@ def taipei_today():
 
 
 def inject_submit_countdown(base_label: str, remaining_seconds: int) -> None:
-    if remaining_seconds <= 0:
-        return
     components.html(
         f"""
         <script>
         (() => {{
           const baseLabel = {json.dumps(base_label)};
-          let remaining = {int(remaining_seconds)};
+          const storageKey = "bingoAnalyzeCooldownUntil";
+          const serverCooldownUntil = Date.now() + {int(remaining_seconds)} * 1000;
           const buttons = Array.from(window.parent.document.querySelectorAll("button"));
           const button = buttons.find((candidate) => {{
             const text = (candidate.textContent || "").trim();
-            return text === `${{baseLabel}} (${{remaining}})` || text === baseLabel;
+            return text === baseLabel || /^抓取並分析 \\(\\d+\\)$/.test(text);
           }});
           if (!button) {{
             return;
           }}
+          if (button.dataset.bingoCountdownBound !== "1") {{
+            button.dataset.bingoCountdownBound = "1";
+            button.addEventListener("click", () => {{
+              const cooldownUntil = Date.now() + 3000;
+              window.parent.localStorage.setItem(storageKey, String(cooldownUntil));
+              startCountdown(cooldownUntil);
+            }}, true);
+          }}
+
+          function activeCooldownUntil() {{
+            const localCooldownUntil = Number(
+              window.parent.localStorage.getItem(storageKey) || 0
+            );
+            return Math.max(localCooldownUntil, serverCooldownUntil);
+          }}
+
           const setLabel = () => {{
-            button.textContent = remaining > 0 ? `${{baseLabel}} (${{remaining}})` : baseLabel;
+            const remaining = Math.ceil((activeCooldownUntil() - Date.now()) / 1000);
             if (remaining > 0) {{
+              button.textContent = `${{baseLabel}} (${{remaining}})`;
               button.disabled = true;
               button.setAttribute("aria-disabled", "true");
             }} else {{
+              button.textContent = baseLabel;
               button.disabled = false;
               button.removeAttribute("aria-disabled");
+              window.parent.localStorage.removeItem(storageKey);
             }}
           }};
-          setLabel();
-          const timer = window.setInterval(() => {{
-            remaining -= 1;
+
+          function startCountdown(cooldownUntil) {{
+            window.parent.localStorage.setItem(storageKey, String(cooldownUntil));
             setLabel();
-            if (remaining <= 0) {{
-              window.clearInterval(timer);
+            if (button.dataset.bingoCountdownTimer) {{
+              window.parent.clearInterval(Number(button.dataset.bingoCountdownTimer));
             }}
-          }}, 1000);
+            const timer = window.parent.setInterval(() => {{
+              setLabel();
+              if (Date.now() >= activeCooldownUntil()) {{
+                window.parent.clearInterval(timer);
+                delete button.dataset.bingoCountdownTimer;
+                setLabel();
+              }}
+            }}, 250);
+            button.dataset.bingoCountdownTimer = String(timer);
+          }}
+
+          const cooldownUntil = activeCooldownUntil();
+          if (cooldownUntil > Date.now()) {{
+            startCountdown(cooldownUntil);
+          }} else {{
+            setLabel();
+          }}
         }})();
         </script>
         """,
@@ -143,6 +177,59 @@ def pair_table(items: list[dict[str, Any]]) -> pd.DataFrame:
     return frame
 
 
+def history_draw_table(limit: int = 50) -> pd.DataFrame:
+    history = load_history(DATA_DIR / "bingo_history.csv")
+    frame = history.sort_values(["datetime", "draw_id"], ascending=False).head(limit)
+    frame = frame[
+        [
+            "draw_id",
+            "date",
+            "time",
+            "numbers",
+            "super_number",
+            "big_small",
+            "odd_even",
+        ]
+    ].copy()
+    frame["numbers"] = frame["numbers"].map(
+        lambda numbers: " ".join(f"{int(number):02d}" for number in numbers)
+    )
+    frame["super_number"] = frame["super_number"].map(lambda value: f"{int(value):02d}")
+    return frame.rename(
+        columns={
+            "draw_id": "期別",
+            "date": "開獎日期",
+            "time": "開獎時間",
+            "numbers": "20 個號碼",
+            "super_number": "超級獎號",
+            "big_small": "猜大小",
+            "odd_even": "猜單雙",
+        }
+    )
+
+
+def show_history_draws() -> None:
+    st.subheader("過往開獎號碼解析")
+    st.caption("完整資料仍會存成 bingo_history.csv；下方先顯示最新 50 期。")
+    try:
+        st.dataframe(
+            history_draw_table(),
+            hide_index=True,
+            use_container_width=True,
+        )
+        csv_path = DATA_DIR / "bingo_history.csv"
+        if csv_path.exists():
+            st.download_button(
+                "下載完整 bingo_history.csv",
+                data=csv_path.read_bytes(),
+                file_name="bingo_history.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+    except Exception as exc:
+        st.info(f"尚無可顯示的過往開獎解析：{exc}")
+
+
 def show_forecast() -> None:
     try:
         forecast = build_forecast(load_history(DATA_DIR / "bingo_history.csv"))
@@ -191,6 +278,7 @@ def show_summary(summary: dict[str, Any]) -> None:
     metrics[3].metric("中位 gap", f"{summary.get('median_gap') or 0:.1f}")
 
     show_forecast()
+    show_history_draws()
 
     hot, cold = st.columns(2)
     with hot:
@@ -262,12 +350,6 @@ choose_range = st.checkbox("指定日期範圍", key="choose_date_range")
 
 with st.form("refresh"):
     st.subheader("抓取與分析")
-    analyze_cooldown = cooldown_remaining_seconds(ANALYZE_COOLDOWN_KEY)
-    analyze_label = (
-        "抓取並分析"
-        if analyze_cooldown == 0
-        else f"抓取並分析 ({analyze_cooldown})"
-    )
     request_delay = st.number_input(
         "每日頁面抓取延遲（秒）",
         min_value=0.5,
@@ -289,8 +371,7 @@ with st.form("refresh"):
         start_date = None
         end_date = None
     submitted = st.form_submit_button(
-        analyze_label,
-        disabled=analyze_cooldown > 0,
+        "抓取並分析",
         use_container_width=True,
     )
 
