@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +19,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("BINGO_DATA_DIR", PROJECT_ROOT))
 OUTPUT_DIR = DATA_DIR / "output"
 SUMMARY_PATH = OUTPUT_DIR / "analysis_summary.json"
+ANALYZE_COOLDOWN_KEY = "analyze_cooldown_until"
 
 CHART_TITLES = {
     "number_frequency.png": "1-80 號碼出現次數",
@@ -34,6 +37,11 @@ def load_summary() -> dict[str, Any] | None:
         return None
     with SUMMARY_PATH.open("r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def cooldown_remaining_seconds(key: str) -> int:
+    remaining = float(st.session_state.get(key, 0.0)) - time.time()
+    return max(0, math.ceil(remaining))
 
 
 def number_table(items: list[dict[str, Any]]) -> pd.DataFrame:
@@ -201,6 +209,12 @@ st.caption("台灣 BINGO BINGO 歷史資料探索。圖表是診斷工具，不�
 
 with st.form("refresh"):
     st.subheader("抓取與分析")
+    analyze_cooldown = cooldown_remaining_seconds(ANALYZE_COOLDOWN_KEY)
+    analyze_label = (
+        "抓取並分析"
+        if analyze_cooldown == 0
+        else f"抓取並分析 ({analyze_cooldown})"
+    )
     choose_range = st.checkbox("指定日期範圍")
     request_delay = st.number_input(
         "每日頁面抓取延遲（秒）",
@@ -217,7 +231,11 @@ with st.form("refresh"):
         days = int(st.number_input("來源頁面最近天數", min_value=1, value=30, step=1))
         start_date = None
         end_date = None
-    submitted = st.form_submit_button("抓取並分析", use_container_width=True)
+    submitted = st.form_submit_button(
+        analyze_label,
+        disabled=analyze_cooldown > 0,
+        use_container_width=True,
+    )
 
 if submitted:
     try:
@@ -229,11 +247,25 @@ if submitted:
                 end_date=end_date,
                 config=ScrapeConfig(delay_seconds=float(request_delay)),
             )
-        st.success(f"已完成 {result.summary['draw_count']} 期分析。")
-        for warning in result.scrape_warnings[:3]:
-            st.warning(warning)
+        st.session_state["refresh_notice"] = (
+            f"已完成 {result.summary['draw_count']} 期分析。"
+        )
+        st.session_state["refresh_warnings"] = result.scrape_warnings[:3]
+        st.session_state["refresh_error"] = None
     except Exception as exc:
-        st.error(str(exc))
+        st.session_state["refresh_notice"] = None
+        st.session_state["refresh_warnings"] = []
+        st.session_state["refresh_error"] = str(exc)
+    finally:
+        st.session_state[ANALYZE_COOLDOWN_KEY] = time.time() + 3
+        st.rerun()
+
+if st.session_state.get("refresh_notice"):
+    st.success(st.session_state["refresh_notice"])
+for warning in st.session_state.get("refresh_warnings", []):
+    st.warning(warning)
+if st.session_state.get("refresh_error"):
+    st.error(st.session_state["refresh_error"])
 
 summary = load_summary()
 if summary:
@@ -247,3 +279,7 @@ if summary:
     show_summary(summary)
 else:
     st.info("還沒有雲端分析結果。先按上方的「抓取並分析」。")
+
+if cooldown_remaining_seconds(ANALYZE_COOLDOWN_KEY) > 0:
+    time.sleep(1)
+    st.rerun()

@@ -29,7 +29,7 @@
           <span>延遲秒數</span>
           <input name="delay" type="number" min="0.5" step="0.1" value="1.0">
         </label>
-        <button type="submit">抓取並分析</button>
+        <button type="submit" data-base-label="抓取並分析">抓取並分析</button>
       </form>
     </header>
 
@@ -147,5 +147,29 @@
         </section>
       {% endif %}
     </main>
+    <script>
+      document.querySelectorAll(".run-form").forEach((form) => {
+        form.addEventListener("submit", () => {
+          const button = form.querySelector("button[type='submit']");
+          if (!button) {
+            return;
+          }
+          const baseLabel = button.dataset.baseLabel || button.textContent;
+          let remaining = 3;
+          button.disabled = true;
+          button.textContent = `${baseLabel} (${remaining})`;
+          const timer = window.setInterval(() => {
+            remaining -= 1;
+            if (remaining > 0) {
+              button.textContent = `${baseLabel} (${remaining})`;
+            } else {
+              window.clearInterval(timer);
+              button.textContent = baseLabel;
+              button.disabled = false;
+            }
+          }, 1000);
+        });
+      });
+    </script>
   </body>
 </html>
