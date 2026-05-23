@@ -7,8 +7,11 @@ from pathlib import Path
 from .analysis import analyze_history
 from .scraper import (
     ScrapeConfig,
+    ScrapeError,
     create_session,
     discover_available_dates,
+    fetch_live_html,
+    parse_history_page,
     save_history_csv,
     scrape_dates,
     selected_dates_from_form,
@@ -37,13 +40,41 @@ def run_pipeline(
 
     with create_session(config) as session:
         available_dates = discover_available_dates(session, config)
+        live_records: list[dict[str, object]] = []
+        live_date: date | None = None
+        live_extra_date: date | None = None
+
+        try:
+            live_records = parse_history_page(fetch_live_html(session, config))
+            live_date = date.fromisoformat(str(live_records[0]["date"]))
+        except Exception:
+            live_records = []
+            live_date = None
+
+        if live_date and live_date not in available_dates:
+            live_extra_date = live_date
+            available_dates = sorted([*available_dates, live_date])
+
         selected_dates = selected_dates_from_form(
             available_dates,
             days=days,
             start_date=start_date,
             end_date=end_date,
         )
-        records, warnings = scrape_dates(selected_dates, config, session=session)
+        if not selected_dates:
+            raise ScrapeError("no dates were selected for scraping")
+
+        history_dates = [
+            selected_date
+            for selected_date in selected_dates
+            if selected_date != live_extra_date
+        ]
+        records: list[dict[str, object]] = []
+        warnings: list[str] = []
+        if history_dates:
+            records, warnings = scrape_dates(history_dates, config, session=session)
+        if live_extra_date and live_extra_date in selected_dates:
+            records.extend(live_records)
 
     save_history_csv(records, csv_path)
     summary = analyze_history(csv_path, output_dir)
@@ -52,4 +83,3 @@ def run_pipeline(
 
 def analyze_existing(project_root: Path) -> dict[str, object]:
     return analyze_history(project_root / "bingo_history.csv", project_root / "output")
-

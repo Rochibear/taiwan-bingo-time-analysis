@@ -16,6 +16,7 @@ from bs4 import BeautifulSoup
 LOGGER = logging.getLogger(__name__)
 
 DEFAULT_SOURCE_URL = "https://www.pilio.idv.tw/bingo/list_history.asp"
+DEFAULT_LIVE_SOURCE_URL = "https://www.pilio.idv.tw/bingo/list.asp"
 CSV_COLUMNS = [
     "draw_id",
     "date",
@@ -41,6 +42,7 @@ class ScrapeError(RuntimeError):
 @dataclass(frozen=True)
 class ScrapeConfig:
     source_url: str = DEFAULT_SOURCE_URL
+    live_source_url: str = DEFAULT_LIVE_SOURCE_URL
     timeout_seconds: float = 20.0
     delay_seconds: float = 1.0
     max_retries: int = 3
@@ -76,19 +78,21 @@ def _normalize_marker(value: str | None) -> str:
     return value
 
 
-def fetch_history_html(
+def fetch_html(
     session: requests.Session,
     config: ScrapeConfig,
-    requested_date: date | None = None,
+    url: str,
+    *,
+    label: str,
+    params: dict[str, str] | None = None,
 ) -> str:
-    params = {"indate": format_site_date(requested_date)} if requested_date else None
     attempts = config.max_retries + 1
     last_error: Exception | None = None
 
     for attempt in range(1, attempts + 1):
         try:
             response = session.get(
-                config.source_url,
+                url,
                 params=params,
                 timeout=config.timeout_seconds,
             )
@@ -109,7 +113,7 @@ def fetch_history_html(
             wait_seconds = config.backoff_seconds * attempt
             LOGGER.warning(
                 "Fetch failed for %s on attempt %s/%s; retrying in %.1fs: %s",
-                requested_date or "date index",
+                label,
                 attempt,
                 attempts,
                 wait_seconds,
@@ -117,7 +121,31 @@ def fetch_history_html(
             )
             time.sleep(wait_seconds)
 
-    raise ScrapeError(f"failed to fetch {requested_date or config.source_url}: {last_error}")
+    raise ScrapeError(f"failed to fetch {label}: {last_error}")
+
+
+def fetch_history_html(
+    session: requests.Session,
+    config: ScrapeConfig,
+    requested_date: date | None = None,
+) -> str:
+    params = {"indate": format_site_date(requested_date)} if requested_date else None
+    return fetch_html(
+        session,
+        config,
+        config.source_url,
+        label=str(requested_date or "date index"),
+        params=params,
+    )
+
+
+def fetch_live_html(session: requests.Session, config: ScrapeConfig) -> str:
+    return fetch_html(
+        session,
+        config,
+        config.live_source_url,
+        label=config.live_source_url,
+    )
 
 
 def discover_available_dates(

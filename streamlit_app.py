@@ -4,11 +4,14 @@ import json
 import math
 import os
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from bingo_analysis.analysis import CHART_FILENAMES, load_history
 from bingo_analysis.forecast import build_forecast
@@ -20,6 +23,8 @@ DATA_DIR = Path(os.environ.get("BINGO_DATA_DIR", PROJECT_ROOT))
 OUTPUT_DIR = DATA_DIR / "output"
 SUMMARY_PATH = OUTPUT_DIR / "analysis_summary.json"
 ANALYZE_COOLDOWN_KEY = "analyze_cooldown_until"
+ANALYZE_COOLDOWN_SECONDS = 3
+TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 
 CHART_TITLES = {
     "number_frequency.png": "1-80 號碼出現次數",
@@ -42,6 +47,52 @@ def load_summary() -> dict[str, Any] | None:
 def cooldown_remaining_seconds(key: str) -> int:
     remaining = float(st.session_state.get(key, 0.0)) - time.time()
     return max(0, math.ceil(remaining))
+
+
+def taipei_today():
+    return datetime.now(TAIPEI_TZ).date()
+
+
+def inject_submit_countdown(base_label: str, remaining_seconds: int) -> None:
+    if remaining_seconds <= 0:
+        return
+    components.html(
+        f"""
+        <script>
+        (() => {{
+          const baseLabel = {json.dumps(base_label)};
+          let remaining = {int(remaining_seconds)};
+          const buttons = Array.from(window.parent.document.querySelectorAll("button"));
+          const button = buttons.find((candidate) => {{
+            const text = (candidate.textContent || "").trim();
+            return text === `${{baseLabel}} (${{remaining}})` || text === baseLabel;
+          }});
+          if (!button) {{
+            return;
+          }}
+          const setLabel = () => {{
+            button.textContent = remaining > 0 ? `${{baseLabel}} (${{remaining}})` : baseLabel;
+            if (remaining > 0) {{
+              button.disabled = true;
+              button.setAttribute("aria-disabled", "true");
+            }} else {{
+              button.disabled = false;
+              button.removeAttribute("aria-disabled");
+            }}
+          }};
+          setLabel();
+          const timer = window.setInterval(() => {{
+            remaining -= 1;
+            setLabel();
+            if (remaining <= 0) {{
+              window.clearInterval(timer);
+            }}
+          }}, 1000);
+        }})();
+        </script>
+        """,
+        height=0,
+    )
 
 
 def number_table(items: list[dict[str, Any]]) -> pd.DataFrame:
@@ -207,6 +258,8 @@ st.markdown(
 st.title("賓果賓果時間分析")
 st.caption("台灣 BINGO BINGO 歷史資料探索。圖表是診斷工具，不是未來開獎保證。")
 
+choose_range = st.checkbox("指定日期範圍", key="choose_date_range")
+
 with st.form("refresh"):
     st.subheader("抓取與分析")
     analyze_cooldown = cooldown_remaining_seconds(ANALYZE_COOLDOWN_KEY)
@@ -215,7 +268,6 @@ with st.form("refresh"):
         if analyze_cooldown == 0
         else f"抓取並分析 ({analyze_cooldown})"
     )
-    choose_range = st.checkbox("指定日期範圍")
     request_delay = st.number_input(
         "每日頁面抓取延遲（秒）",
         min_value=0.5,
@@ -223,9 +275,14 @@ with st.form("refresh"):
         step=0.1,
     )
     if choose_range:
+        today = taipei_today()
         start_column, end_column = st.columns(2)
-        start_date = start_column.date_input("起日")
-        end_date = end_column.date_input("迄日")
+        start_date = start_column.date_input(
+            "起日",
+            value=today - timedelta(days=7),
+            max_value=today,
+        )
+        end_date = end_column.date_input("迄日", value=today, max_value=today)
         days = None
     else:
         days = int(st.number_input("來源頁面最近天數", min_value=1, value=30, step=1))
@@ -238,6 +295,12 @@ with st.form("refresh"):
     )
 
 if submitted:
+    remaining_cooldown = cooldown_remaining_seconds(ANALYZE_COOLDOWN_KEY)
+    if remaining_cooldown > 0:
+        st.session_state["refresh_notice"] = None
+        st.session_state["refresh_warnings"] = []
+        st.session_state["refresh_error"] = f"請再等 {remaining_cooldown} 秒後再抓取。"
+        st.rerun()
     try:
         with st.spinner("抓取每日歷史資料並產生圖表中..."):
             result = run_pipeline(
@@ -257,7 +320,7 @@ if submitted:
         st.session_state["refresh_warnings"] = []
         st.session_state["refresh_error"] = str(exc)
     finally:
-        st.session_state[ANALYZE_COOLDOWN_KEY] = time.time() + 3
+        st.session_state[ANALYZE_COOLDOWN_KEY] = time.time() + ANALYZE_COOLDOWN_SECONDS
         st.rerun()
 
 if st.session_state.get("refresh_notice"):
@@ -280,6 +343,4 @@ if summary:
 else:
     st.info("還沒有雲端分析結果。先按上方的「抓取並分析」。")
 
-if cooldown_remaining_seconds(ANALYZE_COOLDOWN_KEY) > 0:
-    time.sleep(1)
-    st.rerun()
+inject_submit_countdown("抓取並分析", cooldown_remaining_seconds(ANALYZE_COOLDOWN_KEY))
