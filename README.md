@@ -75,9 +75,9 @@ logic, and request delay as the Flask dashboard.
 
 The app also includes a **預告區**:
 
-- 區域 1：uses global frequency, recent frequency, and same-hour bias to produce
+- 下一期候選號碼：uses global frequency, recent frequency, and same-hour bias to produce
   one exploratory 20-number candidate set for the next draw time.
-- 區域 2：shows consecutive-number pairs found in the candidate set and ranked
+- 預測連號：shows consecutive-number pairs found in the candidate set and ranked
   historical consecutive-pair candidates.
 - The forecast area is explicitly marked as an entertainment/statistical
   diagnostic, not a prediction guarantee or betting recommendation.

@@ -96,7 +96,7 @@ def show_forecast() -> None:
     area_one, area_two = st.columns(2)
 
     with area_one:
-        st.markdown("#### 區域 1：下一期候選號碼")
+        st.markdown("#### 下一期候選號碼")
         st.caption(f"推定下一期時間：{forecast['next_draw_label']}")
         st.markdown(
             chip_list(forecast["predicted_numbers"], "#0ea5a3"),
@@ -105,16 +105,16 @@ def show_forecast() -> None:
         st.caption(f"模型：{forecast['model_note']}")
 
     with area_two:
-        st.markdown("#### 區域 2：預測連號")
+        st.markdown("#### 預測連號")
         predicted_pairs = forecast["consecutive_in_prediction"]
         if predicted_pairs:
-            st.caption("區域 1 號碼內形成的連號")
+            st.caption("候選號碼內形成的連號")
             st.markdown(
                 label_chip_list([pair["label"] for pair in predicted_pairs]),
                 unsafe_allow_html=True,
             )
         else:
-            st.caption("區域 1 本次沒有形成連號，改看模型連號候選。")
+            st.caption("本次候選號碼沒有形成連號，改看模型連號候選。")
         st.dataframe(
             pair_table(forecast["consecutive_candidates"]),
             hide_index=True,
