@@ -33,9 +33,28 @@ from bingo_analysis.auth import (
     normalize_email,
     save_dynamic_emails,
     send_otp_email,
+    send_text_email,
     settings_from_secrets,
     smtp_configured,
     verify_otp,
+)
+from bingo_analysis.daily_picks import (
+    MAX_PICK_SETS,
+    MAX_NOTIFY_THRESHOLD,
+    MIN_PICK_NUMBERS,
+    MIN_NOTIFY_THRESHOLD,
+    DailyPickError,
+    add_daily_pick,
+    daily_match_rows,
+    get_user_picks,
+    load_daily_pick_store,
+    mark_notified,
+    parse_number_text,
+    pending_notification_rows,
+    remove_daily_pick,
+    save_daily_pick_store,
+    set_user_picks,
+    validate_pick,
 )
 from bingo_analysis.official import (
     OFFICIAL_NOTE,
@@ -52,6 +71,7 @@ SUMMARY_PATH = OUTPUT_DIR / "analysis_summary.json"
 OFFICIAL_SUMMARY_PATH = OUTPUT_DIR / "official_verification_summary.json"
 OFFICIAL_DETAILS_PATH = OUTPUT_DIR / "official_verification.csv"
 AUTH_USERS_PATH = DATA_DIR / "auth_users.json"
+DAILY_PICKS_PATH = DATA_DIR / "daily_picks.json"
 ANALYZE_COOLDOWN_KEY = "analyze_cooldown_until"
 ANALYZE_COOLDOWN_SECONDS = 3
 TAIPEI_TZ = ZoneInfo("Asia/Taipei")
@@ -376,6 +396,10 @@ def show_help_dialog() -> None:
 
 星級選單會依歷史頻率、近期趨勢與時間偏移產生候選號碼；回測用過往資料檢查命中分布。
 
+**每日鎖號**
+
+可把電腦推薦直接鎖定，也可自選 5 到 10 個號碼。每天最多 3 組，換日後自動清空；達到你設定的命中門檻才會寄信。
+
 **管理功能**
 
 管理員輸入 PIN 後，可新增、移除、匯入、匯出親友 Email，也可以寄送 SMTP 測試信。
@@ -560,6 +584,246 @@ def backtest_table(details: pd.DataFrame) -> pd.DataFrame:
             "hit_count": "命中數",
         }
     )
+
+
+def format_number_list(numbers: list[int]) -> str:
+    return " ".join(f"{int(number):02d}" for number in sorted(numbers))
+
+
+def daily_pick_owner_email() -> str:
+    return current_auth_email() or "local-user"
+
+
+def add_pick_for_current_user(
+    numbers: list[int],
+    threshold: int,
+    source: str,
+) -> None:
+    today = taipei_today()
+    owner_email = daily_pick_owner_email()
+    payload = load_daily_pick_store(DAILY_PICKS_PATH, today)
+    add_daily_pick(payload, owner_email, numbers, threshold, source)
+    save_daily_pick_store(DAILY_PICKS_PATH, payload)
+
+
+def daily_pick_notification_body(rows: list[dict[str, Any]]) -> str:
+    lines = [
+        "你的賓果賓果每日鎖號達到通知門檻：",
+        "",
+    ]
+    for row in rows:
+        lines.extend(
+            [
+                f"第 {int(row['pick_index']) + 1} 組",
+                f"期別：{row['draw_id']}（{row['date']} {row['time']}）",
+                f"門檻：{row['threshold']} 個以上",
+                f"命中：{row['hit_count']} 個",
+                f"命中號碼：{format_number_list(row['hit_numbers']) or '無'}",
+                f"鎖定號碼：{format_number_list(row['selected_numbers'])}",
+                "",
+            ]
+        )
+    lines.extend(
+        [
+            "提醒：這是統計診斷與娛樂工具，不保證未來開獎結果，也不是投注建議。",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def notify_daily_pick_matches(
+    settings: AuthSettings,
+    owner_email: str,
+    picks: list[dict[str, Any]],
+    rows: list[dict[str, Any]],
+) -> bool:
+    if not rows:
+        return False
+    if "@" not in owner_email:
+        st.info("目前未登入 Email，今日鎖號只做本機比對，不寄送通知。")
+        return False
+    if not smtp_configured(settings):
+        st.warning("已有鎖號達到門檻，但 SMTP 尚未設定完成，暫時無法寄信。")
+        return False
+
+    send_text_email(
+        settings,
+        owner_email,
+        "賓果賓果鎖號命中通知",
+        daily_pick_notification_body(rows),
+    )
+    mark_notified(picks, rows)
+    return True
+
+
+def daily_pick_summary_table(
+    picks: list[dict[str, Any]],
+    match_rows: list[dict[str, Any]],
+) -> pd.DataFrame:
+    table_rows: list[dict[str, object]] = []
+    for index, pick in enumerate(picks):
+        rows = [row for row in match_rows if int(row["pick_index"]) == index]
+        latest = rows[0] if rows else None
+        best = max(rows, key=lambda row: int(row["hit_count"])) if rows else None
+        table_rows.append(
+            {
+                "組別": f"第 {index + 1} 組",
+                "來源": pick.get("source", "自選"),
+                "門檻": f"{int(pick.get('threshold', MIN_NOTIFY_THRESHOLD))} 個",
+                "鎖定號碼": format_number_list(pick.get("numbers", [])),
+                "最新期別": latest["draw_id"] if latest else "－",
+                "最新命中": int(latest["hit_count"]) if latest else "－",
+                "最新命中號碼": (
+                    format_number_list(latest["hit_numbers"]) if latest else "－"
+                ),
+                "今日最高命中": int(best["hit_count"]) if best else "－",
+            }
+        )
+    return pd.DataFrame(table_rows)
+
+
+def reached_pick_table(rows: list[dict[str, Any]]) -> pd.DataFrame:
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(
+        [
+            {
+                "組別": f"第 {int(row['pick_index']) + 1} 組",
+                "期別": row["draw_id"],
+                "時間": row["time"],
+                "門檻": row["threshold"],
+                "命中數": row["hit_count"],
+                "命中號碼": format_number_list(row["hit_numbers"]),
+            }
+            for row in rows
+        ]
+    )
+
+
+def show_recommended_pick_lock(numbers: list[int], key_prefix: str) -> None:
+    if len(numbers) < MIN_PICK_NUMBERS:
+        st.caption("5 星以上才可鎖定成每日通知組。")
+        return
+
+    payload = load_daily_pick_store(DAILY_PICKS_PATH, taipei_today())
+    owner_email = daily_pick_owner_email()
+    current_picks = get_user_picks(payload, owner_email)
+    max_threshold = min(MAX_NOTIFY_THRESHOLD, len(numbers))
+    columns = st.columns([0.46, 0.54])
+    with columns[0]:
+        threshold = st.selectbox(
+            "鎖號通知門檻",
+            options=list(range(MIN_NOTIFY_THRESHOLD, max_threshold + 1)),
+            key=f"{key_prefix}_threshold",
+        )
+    with columns[1]:
+        st.write("")
+        disabled = len(current_picks) >= MAX_PICK_SETS
+        if st.button(
+            "鎖定這組建議號碼",
+            key=f"{key_prefix}_lock",
+            disabled=disabled,
+            use_container_width=True,
+        ):
+            try:
+                add_pick_for_current_user(numbers, int(threshold), "電腦推薦")
+                st.success("已鎖定這組建議號碼。")
+                st.rerun()
+            except DailyPickError as exc:
+                st.error(str(exc))
+        if disabled:
+            st.caption("今天已鎖滿 3 組，先移除一組後再新增。")
+
+
+def show_daily_pick_locks(history: pd.DataFrame, settings: AuthSettings) -> None:
+    today = taipei_today()
+    owner_email = daily_pick_owner_email()
+    payload = load_daily_pick_store(DAILY_PICKS_PATH, today)
+    picks = get_user_picks(payload, owner_email)
+
+    st.caption(
+        f"今日鎖號日：{today.isoformat()}。過 00:00 會自動改用新的一天，舊鎖號不會沿用。"
+    )
+    st.caption("只比對鎖定後開出的今日期數；發信檢查會在頁面載入、抓取完成或重算 CSV 後執行。")
+
+    match_rows = daily_match_rows(picks, history, today)
+    pending_rows = pending_notification_rows(picks, match_rows)
+    if pending_rows:
+        try:
+            if notify_daily_pick_matches(settings, owner_email, picks, pending_rows):
+                set_user_picks(payload, owner_email, picks)
+                save_daily_pick_store(DAILY_PICKS_PATH, payload)
+                st.success(f"已寄出 {len(pending_rows)} 筆達標通知。")
+        except Exception:
+            st.warning("鎖號已達門檻，但通知信寄送失敗，稍後會再嘗試。")
+
+    if picks:
+        st.dataframe(
+            daily_pick_summary_table(picks, match_rows),
+            hide_index=True,
+            use_container_width=True,
+        )
+        reached_rows = [row for row in match_rows if row["reached"]]
+        if reached_rows:
+            st.markdown("#### 今日達標紀錄")
+            st.dataframe(
+                reached_pick_table(reached_rows),
+                hide_index=True,
+                use_container_width=True,
+            )
+    else:
+        st.info("今天還沒有鎖號。可以從上方電腦推薦直接鎖定，也可以在下方自選。")
+
+    st.markdown("#### 已鎖定組合")
+    if not picks:
+        st.caption("目前沒有鎖定組合。")
+    for index, pick in enumerate(picks):
+        columns = st.columns([0.78, 0.22])
+        with columns[0]:
+            st.markdown(
+                f"**第 {index + 1} 組｜{pick.get('source', '自選')}｜"
+                f"門檻 {int(pick.get('threshold', MIN_NOTIFY_THRESHOLD))} 個**"
+            )
+            st.markdown(
+                chip_list(pick.get("numbers", []), "#22c55e"),
+                unsafe_allow_html=True,
+            )
+        with columns[1]:
+            st.write("")
+            if st.button(
+                "移除",
+                key=f"remove_daily_pick_{index}",
+                use_container_width=True,
+            ):
+                remove_daily_pick(payload, owner_email, index)
+                save_daily_pick_store(DAILY_PICKS_PATH, payload)
+                st.rerun()
+
+    st.markdown("#### 新增自選號碼")
+    if len(picks) >= MAX_PICK_SETS:
+        st.info("今天已鎖滿 3 組。移除其中一組後才可新增。")
+        return
+
+    with st.form("manual_daily_pick_form"):
+        raw_numbers = st.text_input(
+            "自選號碼",
+            placeholder="例如：01 05 12 23 34 45 56 67 72 80",
+        )
+        threshold = st.selectbox(
+            "命中幾個以上寄信",
+            options=list(range(MIN_NOTIFY_THRESHOLD, MAX_NOTIFY_THRESHOLD + 1)),
+            key="manual_daily_pick_threshold",
+        )
+        submitted = st.form_submit_button("鎖定自選號碼", use_container_width=True)
+    if submitted:
+        try:
+            selected_numbers = parse_number_text(raw_numbers)
+            validate_pick(selected_numbers, int(threshold))
+            add_pick_for_current_user(selected_numbers, int(threshold), "自選")
+            st.success("已鎖定自選號碼。")
+            st.rerun()
+        except DailyPickError as exc:
+            st.error(str(exc))
 
 
 def normalize_scores(values: np.ndarray) -> np.ndarray:
@@ -1011,6 +1275,10 @@ def show_star_selection(history: pd.DataFrame) -> None:
         unsafe_allow_html=True,
     )
     st.caption(f"模型：{selection['model_note']}")
+    show_recommended_pick_lock(
+        list(selection["selected_numbers"]),
+        f"star_selection_{selected_stars}",
+    )
     st.dataframe(
         star_selection_table(selection["selected_details"]),
         hide_index=True,
@@ -1018,7 +1286,7 @@ def show_star_selection(history: pd.DataFrame) -> None:
     )
 
 
-def show_forecast() -> None:
+def show_forecast(settings: AuthSettings) -> None:
     try:
         history = load_history(DATA_DIR / "bingo_history.csv")
         forecast = build_forecast(history)
@@ -1057,9 +1325,12 @@ def show_forecast() -> None:
 
     st.divider()
     show_star_selection(history)
+    st.divider()
+    st.markdown("#### 每日鎖號與通知")
+    show_daily_pick_locks(history, settings)
 
 
-def show_summary(summary: dict[str, Any]) -> None:
+def show_summary(summary: dict[str, Any], settings: AuthSettings) -> None:
     metrics = st.columns(4)
     metrics[0].metric("期數", summary["draw_count"])
     with metrics[1]:
@@ -1069,7 +1340,7 @@ def show_summary(summary: dict[str, Any]) -> None:
     metrics[3].metric("中位 gap", f"{summary.get('median_gap') or 0:.1f}")
 
     with st.expander("預告區", expanded=True):
-        show_forecast()
+        show_forecast(settings)
 
     with st.expander("過往開獎號碼解析", expanded=False):
         show_history_draws()
@@ -1280,7 +1551,7 @@ if summary:
             st.success(f"已重建 {summary['draw_count']} 期圖表。")
         except Exception as exc:
             st.error(str(exc))
-    show_summary(summary)
+    show_summary(summary, auth_settings)
 else:
     st.info("還沒有雲端分析結果。先按上方的「抓取並分析」。")
 

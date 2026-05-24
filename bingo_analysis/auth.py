@@ -291,25 +291,21 @@ def smtp_configured(settings: AuthSettings) -> bool:
     )
 
 
-def send_otp_email(settings: AuthSettings, email: str, code: str) -> None:
+def send_text_email(
+    settings: AuthSettings,
+    email: str,
+    subject: str,
+    body: str,
+) -> None:
     if not smtp_configured(settings):
         raise AuthConfigError("SMTP is not configured")
 
     sender = settings.smtp_from or settings.smtp_username
     message = EmailMessage()
-    message["Subject"] = "賓果賓果登入驗證碼"
+    message["Subject"] = subject
     message["From"] = sender
     message["To"] = email
-    message.set_content(
-        "\n".join(
-            [
-                f"你的登入驗證碼是：{code}",
-                "",
-                f"此驗證碼 {settings.otp_minutes} 分鐘內有效。",
-                "如果不是你本人操作，請忽略這封信。",
-            ]
-        )
-    )
+    message.set_content(body)
 
     if settings.smtp_ssl:
         context = ssl.create_default_context()
@@ -328,3 +324,19 @@ def send_otp_email(settings: AuthSettings, email: str, code: str) -> None:
             server.starttls(context=ssl.create_default_context())
         server.login(settings.smtp_username, settings.smtp_password)
         server.send_message(message)
+
+
+def send_otp_email(settings: AuthSettings, email: str, code: str) -> None:
+    send_text_email(
+        settings,
+        email,
+        "賓果賓果登入驗證碼",
+        "\n".join(
+            [
+                f"你的登入驗證碼是：{code}",
+                "",
+                f"此驗證碼 {settings.otp_minutes} 分鐘內有效。",
+                "如果不是你本人操作，請忽略這封信。",
+            ]
+        ),
+    )

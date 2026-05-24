@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 official_cache/
 auth_users.json
+daily_picks.json
 .streamlit/secrets.toml
 *.pyc
 *.egg-info/

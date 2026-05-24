@@ -127,6 +127,22 @@ friend2@example.com
 - If you need to test before SMTP is configured, set `AUTH_DEBUG_OTP = true`.
   This shows the OTP on screen and should be turned off before sharing the URL.
 
+### Daily locked picks and notifications
+
+After login, the forecast area includes a daily locked-pick panel:
+
+- Lock the current computer-recommended numbers directly, or enter your own 5
+  to 10 numbers.
+- Each user can keep up to 3 locked sets per Taiwan calendar day.
+- Locked sets reset when the Taiwan date changes after 00:00.
+- Each set has a notification threshold from 5 to 10 hits. When the latest CSV
+  contains a same-day draw after the set was locked and it reaches the
+  threshold, the app sends one email to the logged-in user and records that draw
+  as notified so reruns do not spam duplicate emails.
+- Streamlit Community Cloud is not a background scheduler, so this check runs
+  when the page is open, after scraping, or after rebuilding from the existing
+  CSV.
+
 The app also includes a **預告區**:
 
 - 下一期候選號碼：uses global frequency, recent frequency, and same-hour bias to produce
