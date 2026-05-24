@@ -82,6 +82,7 @@ def test_backtest_star_selection_reports_hit_metrics() -> None:
     assert result["summary"]["checked_count"] == 10
     assert result["summary"]["stars"] == 5
     assert result["summary"]["random_mean_hits"] == pytest.approx(1.25)
+    assert 0.0 <= result["summary"]["at_least_four_hit_rate"] <= 1.0
     assert set(result["details"].columns) == {
         "draw_id",
         "date",

@@ -407,6 +407,7 @@ def fallback_backtest_star_selection(
             "checked_count": 0,
             "mean_hits": 0.0,
             "hit_rate": 0.0,
+            "at_least_four_hit_rate": 0.0,
             "zero_hit_rate": 0.0,
             "full_hit_rate": 0.0,
             "random_mean_hits": stars * 0.25,
@@ -422,6 +423,7 @@ def fallback_backtest_star_selection(
         "checked_count": int(len(details)),
         "mean_hits": mean_hits,
         "hit_rate": float((hit_counts > 0).mean()),
+        "at_least_four_hit_rate": float((hit_counts >= 4).mean()),
         "zero_hit_rate": float((hit_counts == 0).mean()),
         "full_hit_rate": float((hit_counts == stars).mean()),
         "random_mean_hits": float(random_mean_hits),
@@ -661,11 +663,15 @@ def show_prediction_backtest() -> None:
         return
 
     summary = result["summary"]
-    metrics = st.columns(4)
+    metrics = st.columns(5)
     metrics[0].metric("回測期數", summary["checked_count"])
     metrics[1].metric("平均命中", f"{summary['mean_hits']:.2f}")
     metrics[2].metric("至少中 1 號", f"{summary['hit_rate']:.2%}")
-    metrics[3].metric("零命中", f"{summary['zero_hit_rate']:.2%}")
+    metrics[3].metric(
+        "至少中 4 號",
+        f"{summary.get('at_least_four_hit_rate', 0.0):.2%}",
+    )
+    metrics[4].metric("零命中", f"{summary['zero_hit_rate']:.2%}")
 
     lift = summary.get("lift_vs_random")
     lift_label = f"{lift:.2f}x" if lift is not None else "－"
