@@ -198,6 +198,20 @@ def show_auth_admin_panel(settings: AuthSettings) -> None:
         else:
             st.caption("目前沒有可移除的一般用戶。")
 
+        st.divider()
+        st.caption("SMTP 測試")
+        if not smtp_configured(settings):
+            st.info("尚未讀到完整 SMTP 設定。")
+        elif st.button("寄送測試信給我", use_container_width=True):
+            try:
+                send_otp_email(settings, current_email, "000000")
+                st.success("測試信已寄出，請查看信箱。")
+            except Exception as exc:
+                st.error(
+                    "SMTP 測試失敗："
+                    f"{type(exc).__name__}: {str(exc)[:180]}"
+                )
+
 
 def store_pending_otp(settings: AuthSettings, email: str, code: str) -> None:
     now = time.time()
