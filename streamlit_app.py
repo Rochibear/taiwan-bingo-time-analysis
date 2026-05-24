@@ -24,6 +24,7 @@ from bingo_analysis.analysis import (
 from bingo_analysis.auth import (
     AuthConfigError,
     AuthSettings,
+    DEFAULT_ADMIN_EMAILS,
     allowed_emails,
     generate_otp,
     hash_otp,
@@ -52,7 +53,6 @@ OFFICIAL_DETAILS_PATH = OUTPUT_DIR / "official_verification.csv"
 AUTH_USERS_PATH = DATA_DIR / "auth_users.json"
 ANALYZE_COOLDOWN_KEY = "analyze_cooldown_until"
 ANALYZE_COOLDOWN_SECONDS = 3
-APP_BUILD_ID = "auth-diagnostics-2026-05-24"
 TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 STAR_MIN = getattr(forecast_module, "STAR_MIN", 1)
 STAR_MAX = getattr(forecast_module, "STAR_MAX", 10)
@@ -101,7 +101,7 @@ def load_auth_settings() -> AuthSettings:
     try:
         return settings_from_secrets(st.secrets)
     except Exception:
-        return AuthSettings(enabled=True)
+        return AuthSettings(enabled=True, admin_emails=DEFAULT_ADMIN_EMAILS)
 
 
 def format_seconds(seconds: float) -> str:
@@ -130,7 +130,7 @@ def show_auth_admin_panel(settings: AuthSettings) -> None:
     if not current_email or current_email not in set(settings.admin_emails):
         return
 
-    with st.sidebar.expander("測試名單管理", expanded=False):
+    with st.sidebar.expander("使用者管理", expanded=False):
         if not settings.admin_pin:
             st.info("管理區尚未完成設定。")
             return
@@ -158,42 +158,45 @@ def show_auth_admin_panel(settings: AuthSettings) -> None:
             source_rows = [
                 {
                     "Email": email,
+                    "權限": "最高管理員" if email in admin_emails else "用戶",
                     "來源": (
-                        "管理員"
+                        "內建 / Secrets"
                         if email in admin_emails
                         else "Secrets"
                         if email in initial_emails
-                        else "臨時名單"
+                        else "管理區"
                     ),
                 }
                 for email in combined_emails
             ]
             st.dataframe(pd.DataFrame(source_rows), hide_index=True)
 
-        new_email = st.text_input("新增測試 Email", key="auth_new_email")
-        if st.button("新增 Email", use_container_width=True):
+        new_email = st.text_input("新增用戶 Email", key="auth_new_email")
+        if st.button("新增用戶", use_container_width=True):
             email = normalize_email(new_email)
             if not email or "@" not in email:
                 st.error("請輸入有效 Email。")
+            elif email in admin_emails:
+                st.info("此 Email 已是最高管理員。")
             else:
                 dynamic_emails.add(email)
                 save_dynamic_emails(AUTH_USERS_PATH, dynamic_emails)
-                st.success(f"已新增 {email}")
+                st.success(f"已新增用戶 {email}")
                 st.rerun()
 
-        removable = sorted(dynamic_emails)
+        removable = sorted(dynamic_emails - admin_emails)
         if removable:
-            remove_email = st.selectbox("移除臨時 Email", removable)
-            if st.button("移除 Email", use_container_width=True):
+            remove_email = st.selectbox("移除用戶 Email", removable)
+            if st.button("移除用戶", use_container_width=True):
                 dynamic_emails.discard(remove_email)
                 save_dynamic_emails(AUTH_USERS_PATH, dynamic_emails)
                 if st.session_state.get("auth_email") == remove_email:
                     for key in ["auth_authenticated", "auth_email", "auth_expires_at"]:
                         st.session_state.pop(key, None)
-                st.success(f"已移除 {remove_email}")
+                st.success(f"已移除用戶 {remove_email}")
                 st.rerun()
         else:
-            st.caption("Secrets 內的初始白名單需到 Streamlit Cloud Secrets 修改。")
+            st.caption("目前沒有可移除的一般用戶。")
 
 
 def store_pending_otp(settings: AuthSettings, email: str, code: str) -> None:
@@ -206,23 +209,6 @@ def store_pending_otp(settings: AuthSettings, email: str, code: str) -> None:
     )
     st.session_state["auth_otp_expires_at"] = now + settings.otp_minutes * 60
     st.session_state["auth_last_sent_at"] = now
-
-
-def show_auth_status(settings: AuthSettings, allowed: set[str]) -> None:
-    dynamic_count = len(load_dynamic_emails(AUTH_USERS_PATH))
-    rows = [
-        {"項目": "部署版本", "狀態": APP_BUILD_ID},
-        {"項目": "登入保護", "狀態": "啟用" if settings.enabled else "關閉"},
-        {"項目": "管理員信箱設定", "狀態": "已設定" if settings.admin_emails else "未設定"},
-        {"項目": "永久測試白名單", "狀態": f"{len(settings.allowed_emails)} 筆"},
-        {"項目": "臨時測試白名單", "狀態": f"{dynamic_count} 筆"},
-        {"項目": "目前可登入名單", "狀態": f"{len(allowed)} 筆"},
-        {"項目": "寄信設定", "狀態": "已設定" if smtp_configured(settings) else "未設定"},
-        {"項目": "測試 OTP 顯示", "狀態": "開啟" if settings.debug_otp else "關閉"},
-    ]
-    with st.expander("登入設定狀態", expanded=not allowed):
-        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
-        st.caption("此區只顯示設定是否存在，不顯示 Email、PIN、密碼或 OTP secret。")
 
 
 def render_auth_gate(settings: AuthSettings) -> None:
@@ -242,7 +228,6 @@ def render_auth_gate(settings: AuthSettings) -> None:
     st.caption("請使用測試白名單內的 Email 取得一次性驗證碼。")
 
     allowed = allowed_emails(settings, AUTH_USERS_PATH)
-    show_auth_status(settings, allowed)
     if not allowed:
         st.warning("登入設定尚未完成，請聯絡管理員。")
 

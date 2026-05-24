@@ -17,6 +17,9 @@ class AuthConfigError(RuntimeError):
     """Raised when authentication is enabled but required config is missing."""
 
 
+DEFAULT_ADMIN_EMAILS = ("killpmite@gmail.com",)
+
+
 @dataclass(frozen=True)
 class AuthSettings:
     enabled: bool = False
@@ -159,6 +162,7 @@ def settings_from_secrets(secrets_mapping: Mapping[str, Any]) -> AuthSettings:
         admin_emails = allowed
     if admin_emails is None and "@" in smtp_username:
         admin_emails = smtp_username
+    admin_email_values = set(DEFAULT_ADMIN_EMAILS) | set(parse_email_list(admin_emails))
     admin_pin = str(
         first_present(secrets_mapping, ["ADMIN_PIN", "AUTH_ADMIN_PIN"]) or ""
     ).strip()
@@ -168,7 +172,7 @@ def settings_from_secrets(secrets_mapping: Mapping[str, Any]) -> AuthSettings:
             True,
         ),
         allowed_emails=parse_email_list(allowed),
-        admin_emails=parse_email_list(admin_emails),
+        admin_emails=tuple(sorted(admin_email_values)),
         admin_pin=admin_pin,
         otp_minutes=max(
             1,

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from bingo_analysis.auth import (
+    DEFAULT_ADMIN_EMAILS,
     allowed_emails,
     generate_otp,
     hash_otp,
@@ -40,8 +41,11 @@ def test_allowed_emails_merges_secrets_and_dynamic_file(tmp_path: Path) -> None:
         }
     )
 
-    assert settings.admin_emails == ("owner@example.com",)
+    assert settings.admin_emails == tuple(
+        sorted({*DEFAULT_ADMIN_EMAILS, "owner@example.com"})
+    )
     assert allowed_emails(settings, path) == {
+        *DEFAULT_ADMIN_EMAILS,
         "owner@example.com",
         "friend@example.com",
     }
@@ -58,6 +62,7 @@ def test_admin_emails_are_allowed_to_login_without_general_whitelist(
     )
 
     assert allowed_emails(settings, tmp_path / "auth_users.json") == {
+        *DEFAULT_ADMIN_EMAILS,
         "admin@example.com",
     }
 
@@ -70,8 +75,11 @@ def test_admin_email_aliases_are_supported(tmp_path: Path) -> None:
         }
     )
 
-    assert settings.admin_emails == ("admin@example.com",)
+    assert settings.admin_emails == tuple(
+        sorted({*DEFAULT_ADMIN_EMAILS, "admin@example.com"})
+    )
     assert allowed_emails(settings, tmp_path / "auth_users.json") == {
+        *DEFAULT_ADMIN_EMAILS,
         "admin@example.com",
     }
 
@@ -91,11 +99,14 @@ def test_nested_auth_secrets_are_supported(tmp_path: Path) -> None:
         }
     )
 
-    assert settings.admin_emails == ("admin@example.com",)
+    assert settings.admin_emails == tuple(
+        sorted({*DEFAULT_ADMIN_EMAILS, "admin@example.com"})
+    )
     assert settings.debug_otp is True
     assert settings.smtp_host == "smtp.example.com"
     assert settings.smtp_username == "mail@example.com"
     assert allowed_emails(settings, tmp_path / "auth_users.json") == {
+        *DEFAULT_ADMIN_EMAILS,
         "admin@example.com",
     }
 
@@ -108,9 +119,21 @@ def test_smtp_username_bootstraps_admin_email(tmp_path: Path) -> None:
         }
     )
 
-    assert settings.admin_emails == ("admin@example.com",)
+    assert settings.admin_emails == tuple(
+        sorted({*DEFAULT_ADMIN_EMAILS, "admin@example.com"})
+    )
     assert allowed_emails(settings, tmp_path / "auth_users.json") == {
+        *DEFAULT_ADMIN_EMAILS,
         "admin@example.com",
+    }
+
+
+def test_default_admin_is_always_highest_admin(tmp_path: Path) -> None:
+    settings = settings_from_secrets({})
+
+    assert "killpmite@gmail.com" in settings.admin_emails
+    assert allowed_emails(settings, tmp_path / "auth_users.json") == {
+        "killpmite@gmail.com",
     }
 
 

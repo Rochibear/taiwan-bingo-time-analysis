@@ -101,7 +101,9 @@ With Gmail, create an App Password and use that as `SMTP_PASSWORD`; do not use
 your normal Google password. After enabling auth:
 
 - Visitors enter an allowed email and receive a six-digit OTP.
-- The left sidebar has **測試名單管理**. Sign in with an email listed in
+- `killpmite@gmail.com` is built in as the highest-level admin account and must
+  still complete Email OTP before seeing the app.
+- The left sidebar has **使用者管理**. Sign in with an email listed in
   `AUTH_ADMIN_EMAILS`, then enter `ADMIN_PIN` to add or remove temporary tester
   emails without redeploying.
 - Emails in `AUTH_ADMIN_EMAILS` can always log in and manage testers. Emails in
