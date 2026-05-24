@@ -3,8 +3,11 @@ from __future__ import annotations
 import json
 import math
 import os
+import smtplib
+import ssl
 import time
 from datetime import datetime, timedelta
+from email.message import EmailMessage
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -33,7 +36,6 @@ from bingo_analysis.auth import (
     normalize_email,
     save_dynamic_emails,
     send_otp_email,
-    send_text_email,
     settings_from_secrets,
     smtp_configured,
     verify_otp,
@@ -631,6 +633,33 @@ def daily_pick_notification_body(rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def send_daily_pick_email(settings: AuthSettings, email: str, body: str) -> None:
+    sender = settings.smtp_from or settings.smtp_username
+    message = EmailMessage()
+    message["Subject"] = "賓果賓果鎖號命中通知"
+    message["From"] = sender
+    message["To"] = email
+    message.set_content(body)
+
+    if settings.smtp_ssl:
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL(
+            settings.smtp_host,
+            settings.smtp_port,
+            timeout=20,
+            context=context,
+        ) as server:
+            server.login(settings.smtp_username, settings.smtp_password)
+            server.send_message(message)
+        return
+
+    with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=20) as server:
+        if settings.smtp_starttls:
+            server.starttls(context=ssl.create_default_context())
+        server.login(settings.smtp_username, settings.smtp_password)
+        server.send_message(message)
+
+
 def notify_daily_pick_matches(
     settings: AuthSettings,
     owner_email: str,
@@ -646,12 +675,7 @@ def notify_daily_pick_matches(
         st.warning("已有鎖號達到門檻，但 SMTP 尚未設定完成，暫時無法寄信。")
         return False
 
-    send_text_email(
-        settings,
-        owner_email,
-        "賓果賓果鎖號命中通知",
-        daily_pick_notification_body(rows),
-    )
+    send_daily_pick_email(settings, owner_email, daily_pick_notification_body(rows))
     mark_notified(picks, rows)
     return True
 
