@@ -355,6 +355,37 @@ def render_auth_gate(settings: AuthSettings) -> None:
     st.stop()
 
 
+def show_help_dialog() -> None:
+    @st.dialog("使用說明")
+    def help_dialog() -> None:
+        st.markdown(
+            """
+**登入**
+
+輸入已加入白名單的 Email，收取 6 位數 OTP 後登入。管理員登入後可在側欄管理使用者。
+
+**抓取與分析**
+
+可選最近天數，或勾選指定日期範圍。按下「抓取並分析」後會更新 CSV、統計資料和圖表。
+
+**圖表與歷史資料**
+
+圖表用來看號碼頻率、相鄰重複、gap、時段、星期、自相關與 FFT 週期訊號。過往開獎號碼區可檢查原始解析結果。
+
+**建議選號與回測**
+
+星級選單會依歷史頻率、近期趨勢與時間偏移產生候選號碼；回測用過往資料檢查命中分布。
+
+**管理功能**
+
+管理員輸入 PIN 後，可新增、移除、匯入、匯出親友 Email，也可以寄送 SMTP 測試信。
+"""
+        )
+        st.caption("提醒：本網站是統計診斷與娛樂工具，不保證未來開獎結果，也不是投注建議。")
+
+    help_dialog()
+
+
 def cooldown_remaining_seconds(key: str) -> int:
     remaining = float(st.session_state.get(key, 0.0)) - time.time()
     return max(0, math.ceil(remaining))
@@ -1157,7 +1188,13 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-st.title("賓果賓果時間分析")
+title_column, help_column = st.columns([0.86, 0.14])
+with title_column:
+    st.title("賓果賓果時間分析")
+with help_column:
+    st.write("")
+    if st.button("?", key="help_dialog_button", help="使用說明", use_container_width=True):
+        show_help_dialog()
 st.caption("台灣 BINGO BINGO 歷史資料探索。圖表是診斷工具，不是未來開獎保證。")
 
 auth_settings = load_auth_settings()
