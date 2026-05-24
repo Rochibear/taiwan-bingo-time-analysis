@@ -52,17 +52,17 @@ def test_build_forecast_returns_prediction_and_pairs() -> None:
     assert "免責聲明" in forecast["disclaimer"]
 
 
-def test_forecast_uses_ranked_top_twenty_not_weighted_sampling() -> None:
+def test_forecast_is_stable_for_same_inputs() -> None:
     history = sample_history(80)
     now = datetime(2026, 5, 23, 10, 0, tzinfo=ZoneInfo("Asia/Taipei"))
 
-    forecast = build_forecast(history, now=now)
-    selection = build_star_selection(history, stars=10, now=now)
+    first = build_forecast(history, now=now)
+    second = build_forecast(history, now=now)
 
-    assert set(selection["selected_numbers"]).issubset(
-        set(forecast["predicted_numbers"])
-    )
-    assert len(forecast["prediction_details"]) == 20
+    assert first["predicted_numbers"] == second["predicted_numbers"]
+    assert len(first["prediction_details"]) == 20
+    assert first["strategy_diagnostics"]
+    assert "自動策略" in first["model_note"]
 
 
 def test_build_star_selection_uses_requested_star_count() -> None:
@@ -76,6 +76,7 @@ def test_build_star_selection_uses_requested_star_count() -> None:
     assert len(selection["selected_numbers"]) == 7
     assert len(set(selection["selected_numbers"])) == 7
     assert len(selection["selected_details"]) == 7
+    assert selection["strategy_diagnostics"]
     assert all(1 <= number <= 80 for number in selection["selected_numbers"])
 
 

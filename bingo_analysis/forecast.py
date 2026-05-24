@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -13,6 +14,7 @@ DRAW_START_MINUTE = 7 * 60 + 5
 DRAW_END_MINUTE = 23 * 60 + 55
 DRAW_INTERVAL_MINUTES = 5
 RECENT_WINDOW_DRAWS = 300
+STRATEGY_EVALUATION_DRAWS = 60
 STAR_MIN = 1
 STAR_MAX = 10
 
@@ -20,6 +22,35 @@ DISCLAIMER = (
     "免責聲明：本預告區只用歷史資料做統計與娛樂性候選，"
     "不代表、保證或暗示未來開獎結果。請勿把它當成投注建議。"
 )
+
+
+@dataclass(frozen=True)
+class ForecastStrategy:
+    key: str
+    label: str
+    global_weight: float
+    recent_weight: float
+    hourly_weight: float
+    gap_weight: float
+
+    @property
+    def note(self) -> str:
+        return (
+            f"{self.label}：全期 {self.global_weight:.0%} + "
+            f"近期 {self.recent_weight:.0%} + "
+            f"同小時 {self.hourly_weight:.0%} + gap {self.gap_weight:.0%}"
+        )
+
+
+FORECAST_STRATEGIES = (
+    ForecastStrategy("balanced", "平衡型", 0.45, 0.30, 0.15, 0.10),
+    ForecastStrategy("recent_hot", "近期熱號型", 0.20, 0.55, 0.15, 0.10),
+    ForecastStrategy("hour_bias", "時段偏號型", 0.25, 0.25, 0.40, 0.10),
+    ForecastStrategy("gap_rebound", "gap 補位型", 0.25, 0.25, 0.10, 0.40),
+    ForecastStrategy("long_hot", "長期熱號型", 0.65, 0.20, 0.10, 0.05),
+)
+DEFAULT_STRATEGY = FORECAST_STRATEGIES[0]
+_STRATEGY_CACHE: dict[tuple[int, str, str, int], tuple[ForecastStrategy, list[dict[str, object]]]] = {}
 
 
 def draw_minutes() -> list[int]:
@@ -76,6 +107,7 @@ def scored_numbers(
     history: pd.DataFrame,
     matrix: pd.DataFrame,
     next_draw_at: datetime,
+    strategy: ForecastStrategy = DEFAULT_STRATEGY,
 ) -> pd.DataFrame:
     global_counts = matrix.sum(axis=0).reindex(NUMBERS).to_numpy(dtype=float) + 1.0
     recent = matrix.tail(min(RECENT_WINDOW_DRAWS, len(matrix)))
@@ -95,10 +127,10 @@ def scored_numbers(
     current_gaps = _current_gaps(matrix)
     gap_score = np.log1p(current_gaps) + 1.0
     score = (
-        0.45 * _normalize(global_counts)
-        + 0.30 * _normalize(recent_counts)
-        + 0.15 * _normalize(hourly_counts)
-        + 0.10 * _normalize(gap_score)
+        strategy.global_weight * _normalize(global_counts)
+        + strategy.recent_weight * _normalize(recent_counts)
+        + strategy.hourly_weight * _normalize(hourly_counts)
+        + strategy.gap_weight * _normalize(gap_score)
     )
 
     frame = pd.DataFrame(
@@ -116,6 +148,126 @@ def scored_numbers(
     )
 
 
+def strategy_evaluation_indices(
+    history_count: int,
+    min_training_draws: int = 300,
+    evaluation_draws: int = STRATEGY_EVALUATION_DRAWS,
+) -> list[int]:
+    if history_count <= min_training_draws:
+        return []
+    start = max(min_training_draws, history_count - evaluation_draws)
+    return list(range(start, history_count))
+
+
+def evaluate_strategy(
+    ordered: pd.DataFrame,
+    full_matrix: pd.DataFrame,
+    strategy: ForecastStrategy,
+    pick_count: int,
+    candidate_indices: list[int],
+) -> dict[str, object]:
+    rows: list[int] = []
+    for index in candidate_indices:
+        training = ordered.iloc[:index]
+        training_matrix = full_matrix.iloc[:index]
+        target = ordered.iloc[index]
+        ranked = scored_numbers(
+            training,
+            training_matrix,
+            _as_taipei_datetime(target["datetime"]),
+            strategy,
+        )
+        selected = {int(number) for number in ranked.head(pick_count)["number"]}
+        actual = {int(number) for number in target["numbers"]}
+        rows.append(len(selected & actual))
+
+    if not rows:
+        return {
+            "key": strategy.key,
+            "strategy": strategy.label,
+            "checked_count": 0,
+            "mean_hits": 0.0,
+            "lift_vs_random": None,
+            "at_least_four_rate": 0.0,
+        }
+
+    hit_counts = np.asarray(rows, dtype=float)
+    random_mean = pick_count * 20 / 80
+    mean_hits = float(hit_counts.mean())
+    return {
+        "key": strategy.key,
+        "strategy": strategy.label,
+        "checked_count": int(len(rows)),
+        "mean_hits": mean_hits,
+        "lift_vs_random": mean_hits / random_mean if random_mean else None,
+        "at_least_four_rate": float((hit_counts >= min(4, pick_count)).mean()),
+    }
+
+
+def choose_adaptive_strategy(
+    history: pd.DataFrame,
+    matrix: pd.DataFrame,
+    pick_count: int,
+) -> tuple[ForecastStrategy, list[dict[str, object]]]:
+    ordered = history.sort_values(["datetime", "draw_id"]).reset_index(drop=True)
+    latest_draw = str(ordered["draw_id"].iloc[-1])
+    latest_time = str(ordered["datetime"].iloc[-1])
+    cache_key = (len(ordered), latest_draw, latest_time, pick_count)
+    if cache_key in _STRATEGY_CACHE:
+        return _STRATEGY_CACHE[cache_key]
+
+    full_matrix = build_appearance_matrix(ordered)
+    min_training_draws = min(300, max(30, len(ordered) // 2))
+    candidate_indices = strategy_evaluation_indices(
+        len(ordered),
+        min_training_draws=min_training_draws,
+    )
+    if not candidate_indices:
+        return DEFAULT_STRATEGY, []
+
+    diagnostics = [
+        evaluate_strategy(
+            ordered,
+            full_matrix,
+            strategy,
+            pick_count,
+            candidate_indices,
+        )
+        for strategy in FORECAST_STRATEGIES
+    ]
+    diagnostics = sorted(
+        diagnostics,
+        key=lambda row: (
+            float(row["mean_hits"]),
+            float(row.get("at_least_four_rate", 0.0)),
+        ),
+        reverse=True,
+    )
+    best_key = str(diagnostics[0]["key"])
+    best_strategy = next(
+        strategy for strategy in FORECAST_STRATEGIES if strategy.key == best_key
+    )
+    result = (best_strategy, diagnostics)
+    _STRATEGY_CACHE[cache_key] = result
+    return result
+
+
+def strategy_model_note(
+    strategy: ForecastStrategy,
+    diagnostics: list[dict[str, object]],
+) -> str:
+    if not diagnostics:
+        return f"自動策略：{strategy.note}；資料量不足時先使用預設平衡型。"
+    best = diagnostics[0]
+    lift = best.get("lift_vs_random")
+    lift_text = f"{float(lift):.2f}x" if lift is not None else "－"
+    return (
+        f"自動策略：{strategy.note}；"
+        f"最近 {best['checked_count']} 期策略回測平均命中 "
+        f"{float(best['mean_hits']):.2f}，相對隨機 {lift_text}。"
+    )
+
+
 def build_star_selection(
     history: pd.DataFrame,
     stars: int,
@@ -128,7 +280,8 @@ def build_star_selection(
 
     next_draw_at = next_draw_datetime(now)
     matrix = build_appearance_matrix(history)
-    ranked = scored_numbers(history, matrix, next_draw_at)
+    strategy, diagnostics = choose_adaptive_strategy(history, matrix, stars)
+    ranked = scored_numbers(history, matrix, next_draw_at, strategy)
     selected = ranked.head(stars).copy()
     selected_numbers = sorted(int(number) for number in selected["number"].tolist())
 
@@ -138,7 +291,9 @@ def build_star_selection(
         "next_draw_label": next_draw_at.strftime("%Y-%m-%d %H:%M"),
         "selected_numbers": selected_numbers,
         "selected_details": selected.to_dict(orient="records"),
-        "model_note": "全期頻率 45% + 近期頻率 30% + 同小時偏號 15% + 近期 gap 10%",
+        "strategy": strategy.label,
+        "strategy_diagnostics": diagnostics,
+        "model_note": strategy_model_note(strategy, diagnostics),
         "disclaimer": DISCLAIMER,
     }
 
@@ -299,15 +454,19 @@ def build_forecast(
 
     next_draw_at = next_draw_datetime(now)
     matrix = build_appearance_matrix(history)
-    ranked = scored_numbers(history, matrix, next_draw_at)
-    predicted_numbers = sorted(int(number) for number in ranked.head(20)["number"])
+    strategy, diagnostics = choose_adaptive_strategy(history, matrix, 20)
+    ranked = scored_numbers(history, matrix, next_draw_at, strategy)
+    prediction = ranked.head(20).copy()
+    predicted_numbers = sorted(int(number) for number in prediction["number"])
     return {
         "next_draw_at": next_draw_at.isoformat(),
         "next_draw_label": next_draw_at.strftime("%Y-%m-%d %H:%M"),
         "predicted_numbers": predicted_numbers,
-        "prediction_details": ranked.head(20).to_dict(orient="records"),
+        "prediction_details": prediction.to_dict(orient="records"),
+        "strategy": strategy.label,
+        "strategy_diagnostics": diagnostics,
         "consecutive_in_prediction": consecutive_pairs(predicted_numbers),
         "consecutive_candidates": consecutive_candidates(history, predicted_numbers),
-        "model_note": "模型分數前 20 名：全期頻率 45% + 近期頻率 30% + 同小時偏號 15% + 近期 gap 10%",
+        "model_note": strategy_model_note(strategy, diagnostics),
         "disclaimer": DISCLAIMER,
     }

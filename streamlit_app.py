@@ -584,6 +584,29 @@ def star_selection_table(items: list[dict[str, Any]]) -> pd.DataFrame:
     return frame
 
 
+def strategy_diagnostics_table(items: list[dict[str, Any]]) -> pd.DataFrame:
+    frame = pd.DataFrame(items)
+    if frame.empty:
+        return frame
+    frame = frame.rename(
+        columns={
+            "strategy": "策略",
+            "checked_count": "回測期數",
+            "mean_hits": "平均命中",
+            "lift_vs_random": "相對隨機",
+            "at_least_four_rate": "達標率",
+        }
+    )
+    keep_columns = ["策略", "回測期數", "平均命中", "相對隨機", "達標率"]
+    frame = frame[[column for column in keep_columns if column in frame]]
+    frame["平均命中"] = frame["平均命中"].map(lambda value: f"{float(value):.2f}")
+    frame["相對隨機"] = frame["相對隨機"].map(
+        lambda value: "－" if pd.isna(value) else f"{float(value):.2f}x"
+    )
+    frame["達標率"] = frame["達標率"].map(lambda value: f"{float(value):.2%}")
+    return frame
+
+
 def backtest_table(details: pd.DataFrame) -> pd.DataFrame:
     if details.empty:
         return details
@@ -1410,6 +1433,13 @@ def show_star_selection(history: pd.DataFrame) -> None:
         unsafe_allow_html=True,
     )
     st.caption(f"模型：{selection['model_note']}")
+    if selection.get("strategy_diagnostics"):
+        with st.expander("策略近期回測", expanded=False):
+            st.dataframe(
+                strategy_diagnostics_table(selection["strategy_diagnostics"]),
+                hide_index=True,
+                use_container_width=True,
+            )
     show_recommended_pick_lock(
         list(selection["selected_numbers"]),
         f"star_selection_{selected_stars}",
@@ -1440,6 +1470,13 @@ def show_forecast(settings: AuthSettings) -> None:
             unsafe_allow_html=True,
         )
         st.caption(f"模型：{forecast['model_note']}")
+        if forecast.get("strategy_diagnostics"):
+            with st.expander("候選策略近期回測", expanded=False):
+                st.dataframe(
+                    strategy_diagnostics_table(forecast["strategy_diagnostics"]),
+                    hide_index=True,
+                    use_container_width=True,
+                )
 
     with area_two:
         st.markdown("#### 預測連號")
