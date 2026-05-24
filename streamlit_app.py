@@ -1097,16 +1097,17 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-st.markdown(
-    '<div id="page-top"></div><a class="back-to-top" href="#page-top">TOP</a>',
-    unsafe_allow_html=True,
-)
 st.title("賓果賓果時間分析")
 st.caption("台灣 BINGO BINGO 歷史資料探索。圖表是診斷工具，不是未來開獎保證。")
 
 auth_settings = load_auth_settings()
-show_auth_admin_panel(auth_settings)
 render_auth_gate(auth_settings)
+show_auth_admin_panel(auth_settings)
+
+st.markdown(
+    '<div id="page-top"></div><a class="back-to-top" href="#page-top">TOP</a>',
+    unsafe_allow_html=True,
+)
 
 choose_range = st.checkbox("指定日期範圍", key="choose_date_range")
 
