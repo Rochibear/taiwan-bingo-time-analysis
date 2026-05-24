@@ -52,6 +52,19 @@ def test_build_forecast_returns_prediction_and_pairs() -> None:
     assert "免責聲明" in forecast["disclaimer"]
 
 
+def test_forecast_uses_ranked_top_twenty_not_weighted_sampling() -> None:
+    history = sample_history(80)
+    now = datetime(2026, 5, 23, 10, 0, tzinfo=ZoneInfo("Asia/Taipei"))
+
+    forecast = build_forecast(history, now=now)
+    selection = build_star_selection(history, stars=10, now=now)
+
+    assert set(selection["selected_numbers"]).issubset(
+        set(forecast["predicted_numbers"])
+    )
+    assert len(forecast["prediction_details"]) == 20
+
+
 def test_build_star_selection_uses_requested_star_count() -> None:
     selection = build_star_selection(
         sample_history(),

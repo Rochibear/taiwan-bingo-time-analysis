@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -60,41 +59,6 @@ def _normalize(values: np.ndarray) -> np.ndarray:
     if total <= 0:
         return np.ones_like(values, dtype=float) / len(values)
     return values / total
-
-
-def _stable_seed(history: pd.DataFrame, next_draw_at: datetime) -> int:
-    latest_draw = str(history["draw_id"].iloc[-1]) if "draw_id" in history else ""
-    latest_time = str(history["datetime"].iloc[-1]) if "datetime" in history else ""
-    seed_source = f"{next_draw_at.isoformat()}|{len(history)}|{latest_draw}|{latest_time}"
-    digest = hashlib.sha256(seed_source.encode("utf-8")).hexdigest()
-    return int(digest[:16], 16) % (2**32)
-
-
-def _weighted_prediction(
-    history: pd.DataFrame,
-    matrix: pd.DataFrame,
-    next_draw_at: datetime,
-) -> list[int]:
-    global_counts = matrix.sum(axis=0).reindex(NUMBERS).to_numpy(dtype=float) + 1.0
-    recent = matrix.tail(min(RECENT_WINDOW_DRAWS, len(matrix)))
-    recent_counts = recent.sum(axis=0).reindex(NUMBERS).to_numpy(dtype=float) + 1.0
-
-    hour_mask = history["datetime"].dt.hour == next_draw_at.hour
-    if hour_mask.any():
-        hourly_counts = matrix.loc[hour_mask].sum(axis=0).reindex(NUMBERS).to_numpy(dtype=float) + 1.0
-    else:
-        hourly_counts = global_counts.copy()
-
-    weights = (
-        0.50 * _normalize(global_counts)
-        + 0.35 * _normalize(recent_counts)
-        + 0.15 * _normalize(hourly_counts)
-    )
-    weights = weights / weights.sum()
-
-    rng = np.random.default_rng(_stable_seed(history, next_draw_at))
-    selected = rng.choice(NUMBERS, size=20, replace=False, p=weights)
-    return sorted(int(number) for number in selected)
 
 
 def _current_gaps(matrix: pd.DataFrame) -> np.ndarray:
@@ -335,13 +299,15 @@ def build_forecast(
 
     next_draw_at = next_draw_datetime(now)
     matrix = build_appearance_matrix(history)
-    predicted_numbers = _weighted_prediction(history, matrix, next_draw_at)
+    ranked = scored_numbers(history, matrix, next_draw_at)
+    predicted_numbers = sorted(int(number) for number in ranked.head(20)["number"])
     return {
         "next_draw_at": next_draw_at.isoformat(),
         "next_draw_label": next_draw_at.strftime("%Y-%m-%d %H:%M"),
         "predicted_numbers": predicted_numbers,
+        "prediction_details": ranked.head(20).to_dict(orient="records"),
         "consecutive_in_prediction": consecutive_pairs(predicted_numbers),
         "consecutive_candidates": consecutive_candidates(history, predicted_numbers),
-        "model_note": "全期頻率 50% + 近期頻率 35% + 同小時偏號 15%",
+        "model_note": "模型分數前 20 名：全期頻率 45% + 近期頻率 30% + 同小時偏號 15% + 近期 gap 10%",
         "disclaimer": DISCLAIMER,
     }
