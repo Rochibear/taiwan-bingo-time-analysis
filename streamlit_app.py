@@ -58,6 +58,11 @@ from bingo_analysis.daily_picks import (
     set_user_picks,
     validate_pick,
 )
+from bingo_analysis.crosscheck import (
+    SOURCE_NOTE,
+    CrosscheckConfig,
+    verify_history_with_backup_source,
+)
 from bingo_analysis.official import (
     OFFICIAL_NOTE,
     OfficialConfig,
@@ -72,6 +77,8 @@ OUTPUT_DIR = DATA_DIR / "output"
 SUMMARY_PATH = OUTPUT_DIR / "analysis_summary.json"
 OFFICIAL_SUMMARY_PATH = OUTPUT_DIR / "official_verification_summary.json"
 OFFICIAL_DETAILS_PATH = OUTPUT_DIR / "official_verification.csv"
+SOURCE_CROSSCHECK_SUMMARY_PATH = OUTPUT_DIR / "source_crosscheck_summary.json"
+SOURCE_CROSSCHECK_DETAILS_PATH = OUTPUT_DIR / "source_crosscheck.csv"
 AUTH_USERS_PATH = DATA_DIR / "auth_users.json"
 DAILY_PICKS_PATH = DATA_DIR / "daily_picks.json"
 ANALYZE_COOLDOWN_KEY = "analyze_cooldown_until"
@@ -117,6 +124,13 @@ def load_official_summary() -> dict[str, Any] | None:
     if not OFFICIAL_SUMMARY_PATH.exists():
         return None
     with OFFICIAL_SUMMARY_PATH.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def load_source_crosscheck_summary() -> dict[str, Any] | None:
+    if not SOURCE_CROSSCHECK_SUMMARY_PATH.exists():
+        return None
+    with SOURCE_CROSSCHECK_SUMMARY_PATH.open("r", encoding="utf-8") as handle:
         return json.load(handle)
 
 
@@ -393,6 +407,10 @@ def show_help_dialog() -> None:
 **圖表與歷史資料**
 
 圖表用來看號碼頻率、相鄰重複、gap、時段、星期、自相關與 FFT 週期訊號。過往開獎號碼區可檢查原始解析結果。
+
+**校驗**
+
+官方校驗用台灣彩券月更新年度檔；民間校驗會用備援來源比對近期資料，若不同就先視為待確認。
 
 **建議選號與回測**
 
@@ -1099,6 +1117,28 @@ def official_status_table(details: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def source_crosscheck_status_table(details: pd.DataFrame) -> pd.DataFrame:
+    if details.empty:
+        return details
+    frame = details.copy()
+    frame["status"] = frame["status"].map(
+        {
+            "verified": "通過",
+            "mismatch": "不一致",
+            "missing_backup": "備援缺期",
+        }
+    ).fillna(frame["status"])
+    return frame.rename(
+        columns={
+            "draw_id": "期別",
+            "date": "開獎日期",
+            "time": "開獎時間",
+            "status": "校驗狀態",
+            "mismatch_fields": "不一致欄位",
+        }
+    )
+
+
 def show_official_verification() -> None:
     st.caption(OFFICIAL_NOTE)
     force_refresh = st.checkbox("重新下載官方年度檔", value=False)
@@ -1148,6 +1188,77 @@ def show_official_verification() -> None:
             "下載官方校驗明細 CSV",
             data=OFFICIAL_DETAILS_PATH.read_bytes(),
             file_name="official_verification.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+    st.divider()
+    st.markdown("#### 民間來源交叉校驗")
+    st.caption(SOURCE_NOTE)
+    crosscheck_days = st.slider(
+        "校驗最近天數",
+        min_value=1,
+        max_value=7,
+        value=2,
+        step=1,
+        key="source_crosscheck_days",
+    )
+    if st.button("執行民間來源校驗", use_container_width=True):
+        try:
+            with st.spinner("抓取備援來源並交叉比對中..."):
+                result = verify_history_with_backup_source(
+                    DATA_DIR,
+                    days=int(crosscheck_days),
+                    config=CrosscheckConfig(delay_seconds=1.0),
+                )
+            st.success(
+                "民間來源校驗完成："
+                f"{result.summary['verified_count']} 通過，"
+                f"{result.summary['mismatch_count']} 不一致，"
+                f"{result.summary['missing_backup_count']} 備援缺期。"
+            )
+            for warning in result.summary.get("warnings", [])[:3]:
+                st.warning(warning)
+        except Exception as exc:
+            st.error(str(exc))
+
+    crosscheck_summary = load_source_crosscheck_summary()
+    if not crosscheck_summary:
+        st.info("尚未執行民間來源校驗。")
+        return
+
+    crosscheck_metrics = st.columns(4)
+    crosscheck_metrics[0].metric(
+        "備援最新日期",
+        crosscheck_summary.get("latest_backup_date") or "－",
+    )
+    crosscheck_metrics[1].metric("校驗通過", crosscheck_summary.get("verified_count", 0))
+    crosscheck_metrics[2].metric("不一致", crosscheck_summary.get("mismatch_count", 0))
+    crosscheck_metrics[3].metric(
+        "備援缺期",
+        crosscheck_summary.get("missing_backup_count", 0),
+    )
+    crosscheck_rate = crosscheck_summary.get("verification_rate")
+    if crosscheck_rate is not None:
+        st.caption(f"可比對資料通過率：{crosscheck_rate:.2%}")
+
+    if SOURCE_CROSSCHECK_DETAILS_PATH.exists():
+        crosscheck_details = pd.read_csv(
+            SOURCE_CROSSCHECK_DETAILS_PATH,
+            dtype={"draw_id": "string"},
+        )
+        focus = crosscheck_details[crosscheck_details["status"] != "verified"].tail(100)
+        if focus.empty:
+            focus = crosscheck_details.tail(100)
+        st.dataframe(
+            source_crosscheck_status_table(focus),
+            hide_index=True,
+            use_container_width=True,
+        )
+        st.download_button(
+            "下載民間校驗明細 CSV",
+            data=SOURCE_CROSSCHECK_DETAILS_PATH.read_bytes(),
+            file_name="source_crosscheck.csv",
             mime="text/csv",
             use_container_width=True,
         )

@@ -143,6 +143,17 @@ After login, the forecast area includes a daily locked-pick panel:
   when the page is open, after scraping, or after rebuilding from the existing
   CSV.
 
+### Cross-checking result sources
+
+The app has two verification paths:
+
+- Official verification uses Taiwan Lottery's annual public download. It is the
+  highest-authority source, but it updates monthly and is not useful for same-day
+  checks.
+- 民間來源交叉校驗 compares recent local Pilio records with `twlottery.in` as a
+  backup source. This is only a reference check: the backup source has no draw
+  time column, so draw time still comes from Pilio.
+
 The app also includes a **預告區**:
 
 - 下一期候選號碼：uses global frequency, recent frequency, and same-hour bias to produce
