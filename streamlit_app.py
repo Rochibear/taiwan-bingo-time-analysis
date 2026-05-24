@@ -265,18 +265,24 @@ def normalize_scores(values: np.ndarray) -> np.ndarray:
     return values / total
 
 
-def fallback_star_selection(history: pd.DataFrame, stars: int) -> dict[str, object]:
-    if not STAR_MIN <= stars <= STAR_MAX:
-        raise ValueError("stars must be between 1 and 10")
+def as_taipei_datetime(value: object) -> datetime:
+    timestamp = pd.Timestamp(value)
+    if timestamp.tzinfo is None:
+        return timestamp.to_pydatetime().replace(tzinfo=TAIPEI_TZ)
+    return timestamp.tz_convert(TAIPEI_TZ).to_pydatetime()
 
-    next_draw_at = forecast_module.next_draw_datetime()
-    matrix = build_appearance_matrix(history)
+
+def fallback_ranked_numbers(
+    history: pd.DataFrame,
+    matrix: pd.DataFrame,
+    target_draw_at: datetime,
+) -> pd.DataFrame:
     global_counts = matrix.sum(axis=0).reindex(NUMBERS).to_numpy(dtype=float) + 1.0
     recent_window = getattr(forecast_module, "RECENT_WINDOW_DRAWS", 300)
     recent = matrix.tail(min(recent_window, len(matrix)))
     recent_counts = recent.sum(axis=0).reindex(NUMBERS).to_numpy(dtype=float) + 1.0
 
-    hour_mask = history["datetime"].dt.hour == next_draw_at.hour
+    hour_mask = history["datetime"].dt.hour == target_draw_at.hour
     if hour_mask.any():
         hourly_counts = (
             matrix.loc[hour_mask].sum(axis=0).reindex(NUMBERS).to_numpy(dtype=float)
@@ -304,7 +310,7 @@ def fallback_star_selection(history: pd.DataFrame, stars: int) -> dict[str, obje
         + 0.10 * normalize_scores(gap_score)
     )
 
-    ranked = pd.DataFrame(
+    return pd.DataFrame(
         {
             "number": NUMBERS,
             "score": score,
@@ -314,6 +320,16 @@ def fallback_star_selection(history: pd.DataFrame, stars: int) -> dict[str, obje
             "current_gap": current_gap_values.astype(int),
         }
     ).sort_values(["score", "number"], ascending=[False, True])
+
+
+def fallback_star_selection(history: pd.DataFrame, stars: int) -> dict[str, object]:
+    if not STAR_MIN <= stars <= STAR_MAX:
+        raise ValueError("stars must be between 1 and 10")
+
+    next_draw_at = forecast_module.next_draw_datetime()
+    frame = history.reset_index(drop=True)
+    matrix = build_appearance_matrix(frame)
+    ranked = fallback_ranked_numbers(frame, matrix, next_draw_at)
     selected = ranked.head(stars).copy()
     return {
         "stars": stars,
@@ -331,6 +347,87 @@ def build_star_selection(history: pd.DataFrame, stars: int) -> dict[str, object]
     if builder:
         return builder(history, stars)
     return fallback_star_selection(history, stars)
+
+
+def fallback_backtest_star_selection(
+    history: pd.DataFrame,
+    stars: int,
+    evaluation_draws: int = 300,
+    min_training_draws: int = 300,
+    verified_draw_ids: set[str] | None = None,
+) -> dict[str, object]:
+    if not STAR_MIN <= stars <= STAR_MAX:
+        raise ValueError("stars must be between 1 and 10")
+    if evaluation_draws < 1:
+        raise ValueError("evaluation_draws must be positive")
+
+    ordered = history.sort_values(["datetime", "draw_id"]).reset_index(drop=True)
+    if len(ordered) <= min_training_draws:
+        raise ValueError(f"need more than {min_training_draws} draws for backtesting")
+
+    candidate_indices = list(range(min_training_draws, len(ordered)))
+    if verified_draw_ids is not None:
+        verified = {str(draw_id) for draw_id in verified_draw_ids}
+        candidate_indices = [
+            index
+            for index in candidate_indices
+            if str(ordered.at[index, "draw_id"]) in verified
+        ]
+    candidate_indices = candidate_indices[-evaluation_draws:]
+
+    full_matrix = build_appearance_matrix(ordered)
+    rows: list[dict[str, object]] = []
+    for index in candidate_indices:
+        training = ordered.iloc[:index]
+        training_matrix = full_matrix.iloc[:index]
+        target = ordered.iloc[index]
+        ranked = fallback_ranked_numbers(
+            training,
+            training_matrix,
+            as_taipei_datetime(target["datetime"]),
+        )
+        selected = sorted(int(number) for number in ranked.head(stars)["number"])
+        actual = {int(number) for number in target["numbers"]}
+        hits = sorted(number for number in selected if number in actual)
+        rows.append(
+            {
+                "draw_id": str(target["draw_id"]),
+                "date": str(target["date"]),
+                "time": str(target["time"]),
+                "selected_numbers": selected,
+                "hit_numbers": hits,
+                "hit_count": len(hits),
+            }
+        )
+
+    details = pd.DataFrame(rows)
+    if details.empty:
+        summary = {
+            "stars": stars,
+            "checked_count": 0,
+            "mean_hits": 0.0,
+            "hit_rate": 0.0,
+            "zero_hit_rate": 0.0,
+            "full_hit_rate": 0.0,
+            "random_mean_hits": stars * 0.25,
+            "lift_vs_random": None,
+        }
+        return {"summary": summary, "details": details}
+
+    hit_counts = details["hit_count"].astype(int)
+    random_mean_hits = stars * 20 / 80
+    mean_hits = float(hit_counts.mean())
+    summary = {
+        "stars": stars,
+        "checked_count": int(len(details)),
+        "mean_hits": mean_hits,
+        "hit_rate": float((hit_counts > 0).mean()),
+        "zero_hit_rate": float((hit_counts == 0).mean()),
+        "full_hit_rate": float((hit_counts == stars).mean()),
+        "random_mean_hits": float(random_mean_hits),
+        "lift_vs_random": mean_hits / random_mean_hits if random_mean_hits else None,
+    }
+    return {"summary": summary, "details": details}
 
 
 def history_draw_table(limit: int = 50) -> pd.DataFrame:
@@ -472,9 +569,9 @@ def verified_draw_ids_from_details() -> set[str] | None:
 
 
 def show_prediction_backtest() -> None:
+    backtest_builder = backtest_star_selection or fallback_backtest_star_selection
     if backtest_star_selection is None:
-        st.info("目前版本尚未載入回測模組，請等待 Streamlit Cloud 重新部署。")
-        return
+        st.caption("使用內建備援回測模組。")
 
     try:
         history = load_history(DATA_DIR / "bingo_history.csv")
@@ -511,7 +608,7 @@ def show_prediction_backtest() -> None:
         st.caption("尚未有官方校驗明細；此處先使用本機歷史資料回測。")
 
     try:
-        result = backtest_star_selection(
+        result = backtest_builder(
             history,
             stars=selected_stars,
             evaluation_draws=evaluation_draws,
