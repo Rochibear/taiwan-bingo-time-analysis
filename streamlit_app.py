@@ -52,6 +52,7 @@ OFFICIAL_DETAILS_PATH = OUTPUT_DIR / "official_verification.csv"
 AUTH_USERS_PATH = DATA_DIR / "auth_users.json"
 ANALYZE_COOLDOWN_KEY = "analyze_cooldown_until"
 ANALYZE_COOLDOWN_SECONDS = 3
+APP_BUILD_ID = "auth-diagnostics-2026-05-24"
 TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 STAR_MIN = getattr(forecast_module, "STAR_MIN", 1)
 STAR_MAX = getattr(forecast_module, "STAR_MAX", 10)
@@ -207,6 +208,23 @@ def store_pending_otp(settings: AuthSettings, email: str, code: str) -> None:
     st.session_state["auth_last_sent_at"] = now
 
 
+def show_auth_status(settings: AuthSettings, allowed: set[str]) -> None:
+    dynamic_count = len(load_dynamic_emails(AUTH_USERS_PATH))
+    rows = [
+        {"項目": "部署版本", "狀態": APP_BUILD_ID},
+        {"項目": "登入保護", "狀態": "啟用" if settings.enabled else "關閉"},
+        {"項目": "管理員信箱設定", "狀態": "已設定" if settings.admin_emails else "未設定"},
+        {"項目": "永久測試白名單", "狀態": f"{len(settings.allowed_emails)} 筆"},
+        {"項目": "臨時測試白名單", "狀態": f"{dynamic_count} 筆"},
+        {"項目": "目前可登入名單", "狀態": f"{len(allowed)} 筆"},
+        {"項目": "寄信設定", "狀態": "已設定" if smtp_configured(settings) else "未設定"},
+        {"項目": "測試 OTP 顯示", "狀態": "開啟" if settings.debug_otp else "關閉"},
+    ]
+    with st.expander("登入設定狀態", expanded=not allowed):
+        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+        st.caption("此區只顯示設定是否存在，不顯示 Email、PIN、密碼或 OTP secret。")
+
+
 def render_auth_gate(settings: AuthSettings) -> None:
     if not settings.enabled:
         return
@@ -224,6 +242,7 @@ def render_auth_gate(settings: AuthSettings) -> None:
     st.caption("請使用測試白名單內的 Email 取得一次性驗證碼。")
 
     allowed = allowed_emails(settings, AUTH_USERS_PATH)
+    show_auth_status(settings, allowed)
     if not allowed:
         st.warning("登入設定尚未完成，請聯絡管理員。")
 

@@ -87,9 +87,47 @@ def float_value(value: Any, default: float) -> float:
         return default
 
 
+def mapping_get(mapping: Mapping[str, Any], key: str) -> Any:
+    try:
+        return mapping.get(key)
+    except Exception:
+        return None
+
+
+def nested_mapping(
+    secrets_mapping: Mapping[str, Any],
+    key: str,
+) -> Mapping[str, Any] | None:
+    value = mapping_get(secrets_mapping, key)
+    return value if isinstance(value, Mapping) else None
+
+
+def secret_value(secrets_mapping: Mapping[str, Any], key: str) -> Any:
+    direct_keys = {key, key.upper(), key.lower()}
+    for candidate in direct_keys:
+        value = mapping_get(secrets_mapping, candidate)
+        if value not in (None, ""):
+            return value
+
+    for section_name in ("auth", "AUTH", "smtp", "SMTP", "email", "EMAIL"):
+        section = nested_mapping(secrets_mapping, section_name)
+        if section is None:
+            continue
+        section_keys = set(direct_keys)
+        for prefix in ("AUTH_", "SMTP_", "EMAIL_"):
+            if key.upper().startswith(prefix):
+                stripped = key[len(prefix) :]
+                section_keys.update({stripped, stripped.upper(), stripped.lower()})
+        for candidate in section_keys:
+            value = mapping_get(section, candidate)
+            if value not in (None, ""):
+                return value
+    return None
+
+
 def first_present(secrets_mapping: Mapping[str, Any], keys: list[str]) -> Any:
     for key in keys:
-        value = secrets_mapping.get(key)
+        value = secret_value(secrets_mapping, key)
         if value not in (None, ""):
             return value
     return None
@@ -105,7 +143,9 @@ def settings_from_secrets(secrets_mapping: Mapping[str, Any]) -> AuthSettings:
             "ALLOWED_EMAIL",
         ],
     )
-    smtp_username = str(secrets_mapping.get("SMTP_USERNAME", "")).strip()
+    smtp_username = str(
+        first_present(secrets_mapping, ["SMTP_USERNAME", "EMAIL_USERNAME"]) or ""
+    ).strip()
     admin_emails = first_present(
         secrets_mapping,
         [
@@ -119,32 +159,75 @@ def settings_from_secrets(secrets_mapping: Mapping[str, Any]) -> AuthSettings:
         admin_emails = allowed
     if admin_emails is None and "@" in smtp_username:
         admin_emails = smtp_username
-    admin_pin = str(secrets_mapping.get("ADMIN_PIN", "")).strip()
+    admin_pin = str(
+        first_present(secrets_mapping, ["ADMIN_PIN", "AUTH_ADMIN_PIN"]) or ""
+    ).strip()
     return AuthSettings(
-        enabled=bool_value(secrets_mapping.get("AUTH_ENABLED"), True),
+        enabled=bool_value(
+            first_present(secrets_mapping, ["AUTH_ENABLED", "ENABLED"]),
+            True,
+        ),
         allowed_emails=parse_email_list(allowed),
         admin_emails=parse_email_list(admin_emails),
         admin_pin=admin_pin,
-        otp_minutes=max(1, int_value(secrets_mapping.get("AUTH_OTP_MINUTES"), 10)),
+        otp_minutes=max(
+            1,
+            int_value(
+                first_present(secrets_mapping, ["AUTH_OTP_MINUTES", "OTP_MINUTES"]),
+                10,
+            ),
+        ),
         session_hours=max(
             0.25,
-            float_value(secrets_mapping.get("AUTH_SESSION_HOURS"), 24.0),
+            float_value(
+                first_present(
+                    secrets_mapping,
+                    ["AUTH_SESSION_HOURS", "SESSION_HOURS"],
+                ),
+                24.0,
+            ),
         ),
         resend_cooldown_seconds=max(
             10,
-            int_value(secrets_mapping.get("AUTH_RESEND_COOLDOWN_SECONDS"), 60),
+            int_value(
+                first_present(
+                    secrets_mapping,
+                    ["AUTH_RESEND_COOLDOWN_SECONDS", "RESEND_COOLDOWN_SECONDS"],
+                ),
+                60,
+            ),
         ),
-        debug_otp=bool_value(secrets_mapping.get("AUTH_DEBUG_OTP"), False),
+        debug_otp=bool_value(
+            first_present(secrets_mapping, ["AUTH_DEBUG_OTP", "DEBUG_OTP"]),
+            False,
+        ),
         otp_hash_secret=str(
-            secrets_mapping.get("AUTH_OTP_SECRET", admin_pin or "streamlit-otp")
+            first_present(secrets_mapping, ["AUTH_OTP_SECRET", "OTP_SECRET"])
+            or admin_pin
+            or "streamlit-otp"
         ),
-        smtp_host=str(secrets_mapping.get("SMTP_HOST", "")).strip(),
-        smtp_port=int_value(secrets_mapping.get("SMTP_PORT"), 465),
+        smtp_host=str(
+            first_present(secrets_mapping, ["SMTP_HOST", "EMAIL_HOST"]) or ""
+        ).strip(),
+        smtp_port=int_value(
+            first_present(secrets_mapping, ["SMTP_PORT", "EMAIL_PORT"]),
+            465,
+        ),
         smtp_username=smtp_username,
-        smtp_password=str(secrets_mapping.get("SMTP_PASSWORD", "")),
-        smtp_from=str(secrets_mapping.get("SMTP_FROM", "")).strip(),
-        smtp_ssl=bool_value(secrets_mapping.get("SMTP_SSL"), True),
-        smtp_starttls=bool_value(secrets_mapping.get("SMTP_STARTTLS"), False),
+        smtp_password=str(
+            first_present(secrets_mapping, ["SMTP_PASSWORD", "EMAIL_PASSWORD"]) or ""
+        ),
+        smtp_from=str(
+            first_present(secrets_mapping, ["SMTP_FROM", "EMAIL_FROM"]) or ""
+        ).strip(),
+        smtp_ssl=bool_value(
+            first_present(secrets_mapping, ["SMTP_SSL", "EMAIL_SSL"]),
+            True,
+        ),
+        smtp_starttls=bool_value(
+            first_present(secrets_mapping, ["SMTP_STARTTLS", "EMAIL_STARTTLS"]),
+            False,
+        ),
     )
 
 

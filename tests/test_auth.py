@@ -76,6 +76,30 @@ def test_admin_email_aliases_are_supported(tmp_path: Path) -> None:
     }
 
 
+def test_nested_auth_secrets_are_supported(tmp_path: Path) -> None:
+    settings = settings_from_secrets(
+        {
+            "auth": {
+                "admin_email": "Admin@Example.com",
+                "debug_otp": True,
+            },
+            "smtp": {
+                "host": "smtp.example.com",
+                "username": "mail@example.com",
+                "password": "secret",
+            },
+        }
+    )
+
+    assert settings.admin_emails == ("admin@example.com",)
+    assert settings.debug_otp is True
+    assert settings.smtp_host == "smtp.example.com"
+    assert settings.smtp_username == "mail@example.com"
+    assert allowed_emails(settings, tmp_path / "auth_users.json") == {
+        "admin@example.com",
+    }
+
+
 def test_smtp_username_bootstraps_admin_email(tmp_path: Path) -> None:
     settings = settings_from_secrets(
         {
