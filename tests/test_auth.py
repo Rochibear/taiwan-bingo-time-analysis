@@ -3,6 +3,7 @@ from pathlib import Path
 from bingo_analysis.auth import (
     DEFAULT_ADMIN_EMAILS,
     allowed_emails,
+    extract_emails,
     generate_otp,
     hash_otp,
     load_dynamic_emails,
@@ -19,6 +20,12 @@ def test_parse_email_list_normalizes_values() -> None:
         "a@example.com",
         "b@example.com",
     )
+
+
+def test_extract_emails_from_csv_or_text() -> None:
+    text = "email,name\nFriend@Example.com,A\nother@example.com\ninvalid\n"
+
+    assert extract_emails(text) == {"friend@example.com", "other@example.com"}
 
 
 def test_dynamic_email_store_round_trip(tmp_path: Path) -> None:

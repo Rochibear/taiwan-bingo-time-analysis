@@ -110,6 +110,17 @@ your normal Google password. After enabling auth:
   `AUTH_ALLOWED_EMAILS` are optional permanent tester emails. Emails added in
   the sidebar are stored in runtime `auth_users.json`, which may reset after a
   Streamlit Cloud redeploy or restart.
+- Admins can export the current non-admin user list as CSV and import CSV/TXT
+  batches. Imported emails are normalized, duplicates are skipped, and admin
+  emails remain highest-level admins rather than normal users. A simple import
+  file can contain one email per line, or a CSV like:
+
+```csv
+email
+friend1@example.com
+friend2@example.com
+```
+
 - `AUTH_ADMIN_EMAIL`, `ADMIN_EMAILS`, and `ADMIN_EMAIL` are also accepted as
   aliases. If no admin email is configured, `SMTP_USERNAME` is used as a final
   bootstrap fallback when it looks like an email address.

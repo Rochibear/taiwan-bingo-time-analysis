@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import smtplib
 import ssl
@@ -18,6 +19,7 @@ class AuthConfigError(RuntimeError):
 
 
 DEFAULT_ADMIN_EMAILS = ("killpmite@gmail.com",)
+EMAIL_PATTERN = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -74,6 +76,10 @@ def parse_email_list(value: Any) -> tuple[str, ...]:
         }
     )
     return tuple(emails)
+
+
+def extract_emails(text: str) -> set[str]:
+    return {normalize_email(match.group(0)) for match in EMAIL_PATTERN.finditer(text)}
 
 
 def int_value(value: Any, default: int) -> int:

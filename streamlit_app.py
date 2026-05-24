@@ -26,6 +26,7 @@ from bingo_analysis.auth import (
     AuthSettings,
     DEFAULT_ADMIN_EMAILS,
     allowed_emails,
+    extract_emails,
     generate_otp,
     hash_otp,
     load_dynamic_emails,
@@ -197,6 +198,44 @@ def show_auth_admin_panel(settings: AuthSettings) -> None:
                 st.rerun()
         else:
             st.caption("目前沒有可移除的一般用戶。")
+
+        st.divider()
+        st.caption("用戶匯入 / 匯出")
+        user_export = pd.DataFrame(
+            {"email": sorted((initial_emails | dynamic_emails) - admin_emails)}
+        )
+        st.download_button(
+            "匯出用戶 CSV",
+            data=user_export.to_csv(index=False).encode("utf-8-sig"),
+            file_name="bingo_users.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        uploaded_users = st.file_uploader(
+            "匯入用戶 CSV 或 TXT",
+            type=["csv", "txt"],
+            key="auth_user_import",
+        )
+        if uploaded_users is not None:
+            imported_text = uploaded_users.getvalue().decode("utf-8-sig", errors="ignore")
+            imported_users = extract_emails(imported_text)
+            valid_users = {
+                email for email in imported_users if email and "@" in email
+            } - admin_emails
+            existing_users = initial_emails | dynamic_emails
+            new_users = valid_users - existing_users
+            skipped_count = len(imported_users) - len(valid_users)
+            duplicate_count = len(valid_users & existing_users)
+            st.caption(
+                f"讀到 {len(imported_users)} 筆，"
+                f"可新增 {len(new_users)} 筆，"
+                f"略過 {skipped_count + duplicate_count} 筆。"
+            )
+            if st.button("確認匯入用戶", use_container_width=True):
+                dynamic_emails.update(new_users)
+                save_dynamic_emails(AUTH_USERS_PATH, dynamic_emails)
+                st.success(f"已新增 {len(new_users)} 位一般用戶。")
+                st.rerun()
 
         st.divider()
         st.caption("SMTP 測試")
