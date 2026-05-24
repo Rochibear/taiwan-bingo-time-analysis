@@ -35,10 +35,12 @@ def test_allowed_emails_merges_secrets_and_dynamic_file(tmp_path: Path) -> None:
         {
             "AUTH_ENABLED": True,
             "AUTH_ALLOWED_EMAILS": ["Owner@Example.com"],
+            "AUTH_ADMIN_EMAILS": ["Owner@Example.com"],
             "ADMIN_PIN": "1234",
         }
     )
 
+    assert settings.admin_emails == ("owner@example.com",)
     assert allowed_emails(settings, path) == {
         "owner@example.com",
         "friend@example.com",

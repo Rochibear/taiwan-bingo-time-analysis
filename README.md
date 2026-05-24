@@ -83,6 +83,7 @@ the ones in `.streamlit/secrets.example.toml`:
 ```toml
 AUTH_ENABLED = true
 AUTH_ALLOWED_EMAILS = ["your-email@example.com"]
+AUTH_ADMIN_EMAILS = ["your-email@example.com"]
 ADMIN_PIN = "change-this-admin-pin"
 AUTH_OTP_SECRET = "change-this-long-random-secret"
 
@@ -99,8 +100,9 @@ With Gmail, create an App Password and use that as `SMTP_PASSWORD`; do not use
 your normal Google password. After enabling auth:
 
 - Visitors enter an allowed email and receive a six-digit OTP.
-- The left sidebar has **測試名單管理**. Enter `ADMIN_PIN` to add or remove
-  temporary tester emails without redeploying.
+- The left sidebar has **測試名單管理**. Sign in with an email listed in
+  `AUTH_ADMIN_EMAILS`, then enter `ADMIN_PIN` to add or remove temporary tester
+  emails without redeploying.
 - Emails in `AUTH_ALLOWED_EMAILS` are the permanent starting whitelist. Emails
   added in the sidebar are stored in runtime `auth_users.json`, which may reset
   after a Streamlit Cloud redeploy or restart.

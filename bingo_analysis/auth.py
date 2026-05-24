@@ -21,6 +21,7 @@ class AuthConfigError(RuntimeError):
 class AuthSettings:
     enabled: bool = False
     allowed_emails: tuple[str, ...] = ()
+    admin_emails: tuple[str, ...] = ()
     admin_pin: str = ""
     otp_minutes: int = 10
     session_hours: float = 24.0
@@ -91,10 +92,12 @@ def settings_from_secrets(secrets_mapping: Mapping[str, Any]) -> AuthSettings:
         "AUTH_ALLOWED_EMAILS",
         secrets_mapping.get("ALLOWED_EMAILS"),
     )
+    admin_emails = secrets_mapping.get("AUTH_ADMIN_EMAILS", allowed)
     admin_pin = str(secrets_mapping.get("ADMIN_PIN", "")).strip()
     return AuthSettings(
         enabled=bool_value(secrets_mapping.get("AUTH_ENABLED"), False),
         allowed_emails=parse_email_list(allowed),
+        admin_emails=parse_email_list(admin_emails),
         admin_pin=admin_pin,
         otp_minutes=max(1, int_value(secrets_mapping.get("AUTH_OTP_MINUTES"), 10)),
         session_hours=max(

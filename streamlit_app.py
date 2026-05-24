@@ -127,6 +127,13 @@ def show_auth_admin_panel(settings: AuthSettings) -> None:
         if not settings.enabled:
             st.caption("登入尚未啟用；設定 AUTH_ENABLED=true 後可使用。")
             return
+        current_email = current_auth_email()
+        if not current_email:
+            st.caption("請先用管理員 Email 完成 OTP 登入。")
+            return
+        if current_email not in set(settings.admin_emails):
+            st.info("目前登入帳號沒有管理權限。")
+            return
         if not settings.admin_pin:
             st.info("設定 ADMIN_PIN 後才可管理測試白名單。")
             return
