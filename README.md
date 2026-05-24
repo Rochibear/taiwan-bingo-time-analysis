@@ -83,8 +83,8 @@ to **App settings > Secrets**, and add values like the ones in
 
 ```toml
 AUTH_ENABLED = true
-AUTH_ALLOWED_EMAILS = ["your-email@example.com"]
 AUTH_ADMIN_EMAILS = ["your-email@example.com"]
+AUTH_ALLOWED_EMAILS = []
 ADMIN_PIN = "change-this-admin-pin"
 AUTH_OTP_SECRET = "change-this-long-random-secret"
 
@@ -104,9 +104,10 @@ your normal Google password. After enabling auth:
 - The left sidebar has **測試名單管理**. Sign in with an email listed in
   `AUTH_ADMIN_EMAILS`, then enter `ADMIN_PIN` to add or remove temporary tester
   emails without redeploying.
-- Emails in `AUTH_ALLOWED_EMAILS` are the permanent starting whitelist. Emails
-  added in the sidebar are stored in runtime `auth_users.json`, which may reset
-  after a Streamlit Cloud redeploy or restart.
+- Emails in `AUTH_ADMIN_EMAILS` can always log in and manage testers. Emails in
+  `AUTH_ALLOWED_EMAILS` are optional permanent tester emails. Emails added in
+  the sidebar are stored in runtime `auth_users.json`, which may reset after a
+  Streamlit Cloud redeploy or restart.
 - If you need to test before SMTP is configured, set `AUTH_DEBUG_OTP = true`.
   This shows the OTP on screen and should be turned off before sharing the URL.
 

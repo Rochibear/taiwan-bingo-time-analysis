@@ -150,13 +150,20 @@ def show_auth_admin_panel(settings: AuthSettings) -> None:
 
         dynamic_emails = load_dynamic_emails(AUTH_USERS_PATH)
         initial_emails = set(settings.allowed_emails)
-        combined_emails = sorted(initial_emails | dynamic_emails)
+        admin_emails = set(settings.admin_emails)
+        combined_emails = sorted(initial_emails | admin_emails | dynamic_emails)
         st.caption(f"目前允許 {len(combined_emails)} 個 Email。")
         if combined_emails:
             source_rows = [
                 {
                     "Email": email,
-                    "來源": "Secrets" if email in initial_emails else "臨時名單",
+                    "來源": (
+                        "管理員"
+                        if email in admin_emails
+                        else "Secrets"
+                        if email in initial_emails
+                        else "臨時名單"
+                    ),
                 }
                 for email in combined_emails
             ]

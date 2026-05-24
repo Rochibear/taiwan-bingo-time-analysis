@@ -141,7 +141,11 @@ def save_dynamic_emails(path: Path, emails: set[str]) -> None:
 
 
 def allowed_emails(settings: AuthSettings, dynamic_path: Path) -> set[str]:
-    return set(settings.allowed_emails) | load_dynamic_emails(dynamic_path)
+    return (
+        set(settings.allowed_emails)
+        | set(settings.admin_emails)
+        | load_dynamic_emails(dynamic_path)
+    )
 
 
 def generate_otp(length: int = 6) -> str:
