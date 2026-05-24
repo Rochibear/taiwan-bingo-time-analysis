@@ -58,6 +58,18 @@ from bingo_analysis.daily_picks import (
     set_user_picks,
     validate_pick,
 )
+from bingo_analysis.daily_report import (
+    build_daily_prediction_log,
+    daily_report_path,
+    daily_report_summary,
+    has_final_draw,
+    last_draw_deadline,
+    load_daily_report_state,
+    mark_report_sent,
+    report_sent_record,
+    save_daily_prediction_log,
+    save_daily_report_state,
+)
 from bingo_analysis.hit_archive import archive_backtest_hits
 from bingo_analysis.crosscheck import (
     SOURCE_NOTE,
@@ -81,6 +93,7 @@ OFFICIAL_DETAILS_PATH = OUTPUT_DIR / "official_verification.csv"
 SOURCE_CROSSCHECK_SUMMARY_PATH = OUTPUT_DIR / "source_crosscheck_summary.json"
 SOURCE_CROSSCHECK_DETAILS_PATH = OUTPUT_DIR / "source_crosscheck.csv"
 BACKTEST_HIT_ARCHIVE_PATH = OUTPUT_DIR / "backtest_hit_archive.csv"
+DAILY_REPORT_STATE_PATH = OUTPUT_DIR / "daily_report_state.json"
 AUTH_USERS_PATH = DATA_DIR / "auth_users.json"
 DAILY_PICKS_PATH = DATA_DIR / "daily_picks.json"
 ANALYZE_COOLDOWN_KEY = "analyze_cooldown_until"
@@ -722,6 +735,74 @@ def send_daily_pick_email(settings: AuthSettings, email: str, body: str) -> None
         server.send_message(message)
 
 
+def daily_prediction_report_email_body(
+    day: object,
+    summary: dict[str, object],
+) -> str:
+    return "\n".join(
+        [
+            f"賓果賓果 {day} 整天預測回測 Log 已產生。",
+            "",
+            f"回測期數：{summary['draw_count']}",
+            f"20碼平均命中：{float(summary['candidate20_mean_hits']):.2f}",
+            (
+                "20碼最高命中："
+                f"{summary['candidate20_best_hit_count']} "
+                f"({summary['candidate20_best_time']})"
+            ),
+            f"十星平均命中：{float(summary['ten_star_mean_hits']):.2f}",
+            (
+                "十星最高命中："
+                f"{summary['ten_star_best_hit_count']} "
+                f"({summary['ten_star_best_time']})"
+            ),
+            f"十星至少中 4 號比例：{float(summary['at_least_four_ten_star_rate']):.2%}",
+            "",
+            "附件 CSV 內含每一期的實際號碼、模型當期建議號碼與命中數。",
+            "提醒：這是統計診斷與回測紀錄，不是保證命中或投注建議。",
+        ]
+    )
+
+
+def send_daily_prediction_report_email(
+    settings: AuthSettings,
+    email: str,
+    day: object,
+    summary: dict[str, object],
+    report_path: Path,
+) -> None:
+    sender = settings.smtp_from or settings.smtp_username
+    message = EmailMessage()
+    message["Subject"] = f"賓果賓果 {day} 整天預測回測 Log"
+    message["From"] = sender
+    message["To"] = email
+    message.set_content(daily_prediction_report_email_body(day, summary))
+    message.add_attachment(
+        report_path.read_bytes(),
+        maintype="text",
+        subtype="csv",
+        filename=report_path.name,
+    )
+
+    if settings.smtp_ssl:
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL(
+            settings.smtp_host,
+            settings.smtp_port,
+            timeout=20,
+            context=context,
+        ) as server:
+            server.login(settings.smtp_username, settings.smtp_password)
+            server.send_message(message)
+        return
+
+    with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=20) as server:
+        if settings.smtp_starttls:
+            server.starttls(context=ssl.create_default_context())
+        server.login(settings.smtp_username, settings.smtp_password)
+        server.send_message(message)
+
+
 def notify_daily_pick_matches(
     settings: AuthSettings,
     owner_email: str,
@@ -910,6 +991,88 @@ def show_daily_pick_locks(history: pd.DataFrame, settings: AuthSettings) -> None
             st.rerun()
         except DailyPickError as exc:
             st.error(str(exc))
+
+
+def load_or_create_daily_prediction_report(
+    history: pd.DataFrame,
+    day: object,
+) -> tuple[Path, pd.DataFrame]:
+    report_path = daily_report_path(OUTPUT_DIR, day)
+    expected_rows = int(history["date"].astype(str).eq(str(day)).sum())
+    if report_path.exists():
+        report = pd.read_csv(report_path, dtype={"draw_id": "string"})
+        if len(report) == expected_rows and expected_rows > 0:
+            return report_path, report
+
+    report = build_daily_prediction_log(history, day)
+    save_daily_prediction_log(report_path, report)
+    return report_path, report
+
+
+def show_daily_prediction_report(history: pd.DataFrame, settings: AuthSettings) -> None:
+    today = taipei_today()
+    owner_email = current_auth_email() or ""
+    st.markdown("#### 今日整天預測回測 Log")
+    st.caption(
+        "最後一期 23:55 出現後，App 有被開啟、抓取分析或重建 CSV 時才會檢查寄信。"
+    )
+
+    if not has_final_draw(history, today):
+        deadline = last_draw_deadline(today).strftime("%Y-%m-%d %H:%M")
+        st.info(f"今天最後一期尚未出現在 CSV；預計 {deadline} 之後可產生整天 Log。")
+        return
+
+    with st.spinner("正在整理今日整天預測回測 Log..."):
+        report_path, report = load_or_create_daily_prediction_report(history, today)
+    summary = daily_report_summary(report)
+    metrics = st.columns(4)
+    metrics[0].metric("回測期數", summary["draw_count"])
+    metrics[1].metric("20碼平均命中", f"{float(summary['candidate20_mean_hits']):.2f}")
+    metrics[2].metric("十星平均命中", f"{float(summary['ten_star_mean_hits']):.2f}")
+    metrics[3].metric(
+        "十星至少中4號",
+        f"{float(summary['at_least_four_ten_star_rate']):.2%}",
+    )
+
+    state = load_daily_report_state(DAILY_REPORT_STATE_PATH)
+    sent_record = report_sent_record(state, today, owner_email) if owner_email else None
+    if sent_record:
+        st.success(f"今日整天 Log 已寄出給 {owner_email}，不會重複寄送。")
+    elif not owner_email:
+        st.info("登入後才會自動把今日整天 Log 寄到你的 Email。")
+    elif not smtp_configured(settings):
+        st.warning("SMTP 尚未設定完成，今日整天 Log 已產生，但無法自動寄信。")
+    elif int(summary["draw_count"]) <= 0:
+        st.info("今日沒有可回測期數，暫不寄信。")
+    else:
+        try:
+            send_daily_prediction_report_email(
+                settings,
+                owner_email,
+                today,
+                summary,
+                report_path,
+            )
+            mark_report_sent(
+                state,
+                today,
+                owner_email,
+                report_path,
+                int(summary["draw_count"]),
+            )
+            save_daily_report_state(DAILY_REPORT_STATE_PATH, state)
+            st.success(f"今日整天 Log 已寄出給 {owner_email}。")
+        except Exception:
+            st.warning("今日整天 Log 已產生，但寄信失敗；請稍後重新整理或檢查 SMTP。")
+
+    if report_path.exists():
+        st.download_button(
+            "下載今日整天 Log CSV",
+            data=report_path.read_bytes(),
+            file_name=report_path.name,
+            mime="text/csv",
+            use_container_width=True,
+        )
 
 
 def normalize_scores(values: np.ndarray) -> np.ndarray:
@@ -1557,6 +1720,8 @@ def show_forecast(settings: AuthSettings) -> None:
     st.divider()
     st.markdown("#### 每日鎖號與通知")
     show_daily_pick_locks(history, settings)
+    st.divider()
+    show_daily_prediction_report(history, settings)
 
 
 def show_summary(summary: dict[str, Any], settings: AuthSettings) -> None:

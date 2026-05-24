@@ -143,6 +143,18 @@ After login, the forecast area includes a daily locked-pick panel:
   when the page is open, after scraping, or after rebuilding from the existing
   CSV.
 
+### End-of-day prediction log email
+
+When the same-day CSV contains the final `23:55` draw, the forecast area also
+builds `output/daily_prediction_log_YYYY-MM-DD.csv`. The CSV records each draw's
+actual numbers, the model's 20-number candidate set, the ten-star set, hit
+numbers, hit counts, and strategy labels. If SMTP is configured and a user is
+logged in, the app emails that CSV once per Taiwan calendar day per user.
+
+Streamlit Community Cloud still cannot wake itself in the background. The
+end-of-day email is triggered when someone opens the app, presses scrape/analyze,
+or rebuilds the charts after the final draw has appeared.
+
 ### Cross-checking result sources
 
 The app has two verification paths:
