@@ -76,9 +76,10 @@ logic, and request delay as the Flask dashboard.
 ### Optional Email OTP login for testers
 
 The Streamlit app can be protected by an email one-time-password gate. It is
-disabled by default so a fresh deploy does not lock you out. To enable it, open
-Streamlit Community Cloud, go to **App settings > Secrets**, and add values like
-the ones in `.streamlit/secrets.example.toml`:
+enabled by default; set `AUTH_ENABLED = false` only if you intentionally want to
+open the app without login. To configure it, open Streamlit Community Cloud, go
+to **App settings > Secrets**, and add values like the ones in
+`.streamlit/secrets.example.toml`:
 
 ```toml
 AUTH_ENABLED = true

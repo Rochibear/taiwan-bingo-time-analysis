@@ -47,6 +47,11 @@ def test_allowed_emails_merges_secrets_and_dynamic_file(tmp_path: Path) -> None:
     }
 
 
+def test_auth_enabled_defaults_to_true_unless_disabled() -> None:
+    assert settings_from_secrets({}).enabled is True
+    assert settings_from_secrets({"AUTH_ENABLED": False}).enabled is False
+
+
 def test_otp_hash_verification() -> None:
     email = normalize_email("Owner@Example.com")
     code = generate_otp()

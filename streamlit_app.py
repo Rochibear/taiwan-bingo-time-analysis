@@ -100,7 +100,7 @@ def load_auth_settings() -> AuthSettings:
     try:
         return settings_from_secrets(st.secrets)
     except Exception:
-        return AuthSettings(enabled=False)
+        return AuthSettings(enabled=True)
 
 
 def format_seconds(seconds: float) -> str:
@@ -123,19 +123,15 @@ def current_auth_email() -> str | None:
 
 
 def show_auth_admin_panel(settings: AuthSettings) -> None:
+    if not settings.enabled:
+        return
+    current_email = current_auth_email()
+    if not current_email or current_email not in set(settings.admin_emails):
+        return
+
     with st.sidebar.expander("測試名單管理", expanded=False):
-        if not settings.enabled:
-            st.caption("登入尚未啟用；設定 AUTH_ENABLED=true 後可使用。")
-            return
-        current_email = current_auth_email()
-        if not current_email:
-            st.caption("請先用管理員 Email 完成 OTP 登入。")
-            return
-        if current_email not in set(settings.admin_emails):
-            st.info("目前登入帳號沒有管理權限。")
-            return
         if not settings.admin_pin:
-            st.info("設定 ADMIN_PIN 後才可管理測試白名單。")
+            st.info("管理區尚未完成設定。")
             return
 
         if not st.session_state.get("auth_admin_unlocked"):
@@ -222,7 +218,7 @@ def render_auth_gate(settings: AuthSettings) -> None:
 
     allowed = allowed_emails(settings, AUTH_USERS_PATH)
     if not allowed:
-        st.warning("目前尚未設定任何允許 Email。請用左側管理區新增測試 Email。")
+        st.warning("登入設定尚未完成，請聯絡管理員。")
 
     email = normalize_email(st.text_input("Email", key="auth_login_email"))
     now = time.time()
@@ -245,7 +241,7 @@ def render_auth_gate(settings: AuthSettings) -> None:
         if not email or "@" not in email:
             st.error("請先輸入有效 Email。")
         elif email not in allowed:
-            st.error("這個 Email 不在測試白名單。")
+            st.error("此 Email 無法登入。")
         else:
             code = generate_otp()
             sent_or_debug = False
@@ -256,10 +252,10 @@ def render_auth_gate(settings: AuthSettings) -> None:
                     sent_or_debug = True
                 elif not settings.debug_otp:
                     raise AuthConfigError("SMTP 尚未設定，無法寄送驗證碼。")
-            except AuthConfigError as exc:
-                st.error(str(exc))
-            except Exception as exc:
-                st.error(f"寄信失敗：{exc}")
+            except AuthConfigError:
+                st.error("驗證碼寄送失敗，請聯絡管理員。")
+            except Exception:
+                st.error("驗證碼寄送失敗，請聯絡管理員。")
 
             if settings.debug_otp:
                 st.info(f"測試模式驗證碼：{code}")

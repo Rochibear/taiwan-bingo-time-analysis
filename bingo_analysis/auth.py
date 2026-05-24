@@ -95,7 +95,7 @@ def settings_from_secrets(secrets_mapping: Mapping[str, Any]) -> AuthSettings:
     admin_emails = secrets_mapping.get("AUTH_ADMIN_EMAILS", allowed)
     admin_pin = str(secrets_mapping.get("ADMIN_PIN", "")).strip()
     return AuthSettings(
-        enabled=bool_value(secrets_mapping.get("AUTH_ENABLED"), False),
+        enabled=bool_value(secrets_mapping.get("AUTH_ENABLED"), True),
         allowed_emails=parse_email_list(allowed),
         admin_emails=parse_email_list(admin_emails),
         admin_pin=admin_pin,
