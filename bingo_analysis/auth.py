@@ -87,12 +87,38 @@ def float_value(value: Any, default: float) -> float:
         return default
 
 
+def first_present(secrets_mapping: Mapping[str, Any], keys: list[str]) -> Any:
+    for key in keys:
+        value = secrets_mapping.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
 def settings_from_secrets(secrets_mapping: Mapping[str, Any]) -> AuthSettings:
-    allowed = secrets_mapping.get(
-        "AUTH_ALLOWED_EMAILS",
-        secrets_mapping.get("ALLOWED_EMAILS"),
+    allowed = first_present(
+        secrets_mapping,
+        [
+            "AUTH_ALLOWED_EMAILS",
+            "AUTH_ALLOWED_EMAIL",
+            "ALLOWED_EMAILS",
+            "ALLOWED_EMAIL",
+        ],
     )
-    admin_emails = secrets_mapping.get("AUTH_ADMIN_EMAILS", allowed)
+    smtp_username = str(secrets_mapping.get("SMTP_USERNAME", "")).strip()
+    admin_emails = first_present(
+        secrets_mapping,
+        [
+            "AUTH_ADMIN_EMAILS",
+            "AUTH_ADMIN_EMAIL",
+            "ADMIN_EMAILS",
+            "ADMIN_EMAIL",
+        ],
+    )
+    if admin_emails is None:
+        admin_emails = allowed
+    if admin_emails is None and "@" in smtp_username:
+        admin_emails = smtp_username
     admin_pin = str(secrets_mapping.get("ADMIN_PIN", "")).strip()
     return AuthSettings(
         enabled=bool_value(secrets_mapping.get("AUTH_ENABLED"), True),
@@ -114,7 +140,7 @@ def settings_from_secrets(secrets_mapping: Mapping[str, Any]) -> AuthSettings:
         ),
         smtp_host=str(secrets_mapping.get("SMTP_HOST", "")).strip(),
         smtp_port=int_value(secrets_mapping.get("SMTP_PORT"), 465),
-        smtp_username=str(secrets_mapping.get("SMTP_USERNAME", "")).strip(),
+        smtp_username=smtp_username,
         smtp_password=str(secrets_mapping.get("SMTP_PASSWORD", "")),
         smtp_from=str(secrets_mapping.get("SMTP_FROM", "")).strip(),
         smtp_ssl=bool_value(secrets_mapping.get("SMTP_SSL"), True),

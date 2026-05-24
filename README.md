@@ -108,6 +108,9 @@ your normal Google password. After enabling auth:
   `AUTH_ALLOWED_EMAILS` are optional permanent tester emails. Emails added in
   the sidebar are stored in runtime `auth_users.json`, which may reset after a
   Streamlit Cloud redeploy or restart.
+- `AUTH_ADMIN_EMAIL`, `ADMIN_EMAILS`, and `ADMIN_EMAIL` are also accepted as
+  aliases. If no admin email is configured, `SMTP_USERNAME` is used as a final
+  bootstrap fallback when it looks like an email address.
 - If you need to test before SMTP is configured, set `AUTH_DEBUG_OTP = true`.
   This shows the OTP on screen and should be turned off before sharing the URL.
 
