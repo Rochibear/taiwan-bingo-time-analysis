@@ -2,6 +2,8 @@
 __pycache__/
 .pytest_cache/
 official_cache/
+auth_users.json
+.streamlit/secrets.toml
 *.pyc
 *.egg-info/
 server.*.log

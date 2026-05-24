@@ -21,6 +21,20 @@ from bingo_analysis.analysis import (
     build_appearance_matrix,
     load_history,
 )
+from bingo_analysis.auth import (
+    AuthConfigError,
+    AuthSettings,
+    allowed_emails,
+    generate_otp,
+    hash_otp,
+    load_dynamic_emails,
+    normalize_email,
+    save_dynamic_emails,
+    send_otp_email,
+    settings_from_secrets,
+    smtp_configured,
+    verify_otp,
+)
 from bingo_analysis.official import (
     OFFICIAL_NOTE,
     OfficialConfig,
@@ -35,6 +49,7 @@ OUTPUT_DIR = DATA_DIR / "output"
 SUMMARY_PATH = OUTPUT_DIR / "analysis_summary.json"
 OFFICIAL_SUMMARY_PATH = OUTPUT_DIR / "official_verification_summary.json"
 OFFICIAL_DETAILS_PATH = OUTPUT_DIR / "official_verification.csv"
+AUTH_USERS_PATH = DATA_DIR / "auth_users.json"
 ANALYZE_COOLDOWN_KEY = "analyze_cooldown_until"
 ANALYZE_COOLDOWN_SECONDS = 3
 TAIPEI_TZ = ZoneInfo("Asia/Taipei")
@@ -79,6 +94,198 @@ def load_official_summary() -> dict[str, Any] | None:
         return None
     with OFFICIAL_SUMMARY_PATH.open("r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def load_auth_settings() -> AuthSettings:
+    try:
+        return settings_from_secrets(st.secrets)
+    except Exception:
+        return AuthSettings(enabled=False)
+
+
+def format_seconds(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    minutes, remaining_seconds = divmod(seconds, 60)
+    if minutes:
+        return f"{minutes} 分 {remaining_seconds} 秒"
+    return f"{remaining_seconds} 秒"
+
+
+def current_auth_email() -> str | None:
+    if not st.session_state.get("auth_authenticated"):
+        return None
+    expires_at = float(st.session_state.get("auth_expires_at", 0.0))
+    if expires_at <= time.time():
+        for key in ["auth_authenticated", "auth_email", "auth_expires_at"]:
+            st.session_state.pop(key, None)
+        return None
+    return str(st.session_state.get("auth_email", ""))
+
+
+def show_auth_admin_panel(settings: AuthSettings) -> None:
+    with st.sidebar.expander("測試名單管理", expanded=False):
+        if not settings.enabled:
+            st.caption("登入尚未啟用；設定 AUTH_ENABLED=true 後可使用。")
+            return
+        if not settings.admin_pin:
+            st.info("設定 ADMIN_PIN 後才可管理測試白名單。")
+            return
+
+        if not st.session_state.get("auth_admin_unlocked"):
+            pin = st.text_input("管理 PIN", type="password", key="auth_admin_pin")
+            if st.button("進入管理區", use_container_width=True):
+                if pin == settings.admin_pin:
+                    st.session_state["auth_admin_unlocked"] = True
+                    st.rerun()
+                st.error("管理 PIN 不正確。")
+            return
+
+        st.success("管理區已解鎖")
+        if st.button("鎖定管理區", use_container_width=True):
+            st.session_state.pop("auth_admin_unlocked", None)
+            st.rerun()
+
+        dynamic_emails = load_dynamic_emails(AUTH_USERS_PATH)
+        initial_emails = set(settings.allowed_emails)
+        combined_emails = sorted(initial_emails | dynamic_emails)
+        st.caption(f"目前允許 {len(combined_emails)} 個 Email。")
+        if combined_emails:
+            source_rows = [
+                {
+                    "Email": email,
+                    "來源": "Secrets" if email in initial_emails else "臨時名單",
+                }
+                for email in combined_emails
+            ]
+            st.dataframe(pd.DataFrame(source_rows), hide_index=True)
+
+        new_email = st.text_input("新增測試 Email", key="auth_new_email")
+        if st.button("新增 Email", use_container_width=True):
+            email = normalize_email(new_email)
+            if not email or "@" not in email:
+                st.error("請輸入有效 Email。")
+            else:
+                dynamic_emails.add(email)
+                save_dynamic_emails(AUTH_USERS_PATH, dynamic_emails)
+                st.success(f"已新增 {email}")
+                st.rerun()
+
+        removable = sorted(dynamic_emails)
+        if removable:
+            remove_email = st.selectbox("移除臨時 Email", removable)
+            if st.button("移除 Email", use_container_width=True):
+                dynamic_emails.discard(remove_email)
+                save_dynamic_emails(AUTH_USERS_PATH, dynamic_emails)
+                if st.session_state.get("auth_email") == remove_email:
+                    for key in ["auth_authenticated", "auth_email", "auth_expires_at"]:
+                        st.session_state.pop(key, None)
+                st.success(f"已移除 {remove_email}")
+                st.rerun()
+        else:
+            st.caption("Secrets 內的初始白名單需到 Streamlit Cloud Secrets 修改。")
+
+
+def store_pending_otp(settings: AuthSettings, email: str, code: str) -> None:
+    now = time.time()
+    st.session_state["auth_pending_email"] = email
+    st.session_state["auth_otp_hash"] = hash_otp(
+        email,
+        code,
+        settings.otp_hash_secret,
+    )
+    st.session_state["auth_otp_expires_at"] = now + settings.otp_minutes * 60
+    st.session_state["auth_last_sent_at"] = now
+
+
+def render_auth_gate(settings: AuthSettings) -> None:
+    if not settings.enabled:
+        return
+
+    user_email = current_auth_email()
+    if user_email:
+        st.sidebar.success(f"已登入：{user_email}")
+        if st.sidebar.button("登出", use_container_width=True):
+            for key in ["auth_authenticated", "auth_email", "auth_expires_at"]:
+                st.session_state.pop(key, None)
+            st.rerun()
+        return
+
+    st.markdown("### Email OTP 登入")
+    st.caption("請使用測試白名單內的 Email 取得一次性驗證碼。")
+
+    allowed = allowed_emails(settings, AUTH_USERS_PATH)
+    if not allowed:
+        st.warning("目前尚未設定任何允許 Email。請用左側管理區新增測試 Email。")
+
+    email = normalize_email(st.text_input("Email", key="auth_login_email"))
+    now = time.time()
+    remaining_cooldown = (
+        float(st.session_state.get("auth_last_sent_at", 0.0))
+        + settings.resend_cooldown_seconds
+        - now
+    )
+    send_disabled = remaining_cooldown > 0
+    send_label = (
+        f"寄送驗證碼（{format_seconds(remaining_cooldown)}）"
+        if send_disabled
+        else "寄送驗證碼"
+    )
+
+    if st.button("重新整理白名單", use_container_width=True):
+        st.rerun()
+
+    if st.button(send_label, disabled=send_disabled, use_container_width=True):
+        if not email or "@" not in email:
+            st.error("請先輸入有效 Email。")
+        elif email not in allowed:
+            st.error("這個 Email 不在測試白名單。")
+        else:
+            code = generate_otp()
+            sent_or_debug = False
+            try:
+                if smtp_configured(settings):
+                    send_otp_email(settings, email, code)
+                    st.success("驗證碼已寄出，請查看信箱。")
+                    sent_or_debug = True
+                elif not settings.debug_otp:
+                    raise AuthConfigError("SMTP 尚未設定，無法寄送驗證碼。")
+            except AuthConfigError as exc:
+                st.error(str(exc))
+            except Exception as exc:
+                st.error(f"寄信失敗：{exc}")
+
+            if settings.debug_otp:
+                st.info(f"測試模式驗證碼：{code}")
+                sent_or_debug = True
+            if sent_or_debug:
+                store_pending_otp(settings, email, code)
+
+    pending_email = st.session_state.get("auth_pending_email")
+    expires_at = float(st.session_state.get("auth_otp_expires_at", 0.0))
+    if pending_email and expires_at > now:
+        st.caption(f"驗證碼已送出給 {pending_email}，{format_seconds(expires_at - now)} 後失效。")
+        code_input = st.text_input("6 位數驗證碼", max_chars=6, key="auth_code")
+        if st.button("驗證登入", use_container_width=True):
+            expected_hash = str(st.session_state.get("auth_otp_hash", ""))
+            if verify_otp(
+                str(pending_email),
+                code_input.strip(),
+                expected_hash,
+                settings.otp_hash_secret,
+            ):
+                st.session_state["auth_authenticated"] = True
+                st.session_state["auth_email"] = str(pending_email)
+                st.session_state["auth_expires_at"] = (
+                    time.time() + settings.session_hours * 3600
+                )
+                for key in ["auth_pending_email", "auth_otp_hash", "auth_otp_expires_at"]:
+                    st.session_state.pop(key, None)
+                st.rerun()
+            st.error("驗證碼不正確。")
+    elif pending_email:
+        st.warning("驗證碼已過期，請重新寄送。")
+
+    st.stop()
 
 
 def cooldown_remaining_seconds(key: str) -> int:
@@ -889,6 +1096,10 @@ st.markdown(
 )
 st.title("賓果賓果時間分析")
 st.caption("台灣 BINGO BINGO 歷史資料探索。圖表是診斷工具，不是未來開獎保證。")
+
+auth_settings = load_auth_settings()
+show_auth_admin_panel(auth_settings)
+render_auth_gate(auth_settings)
 
 choose_range = st.checkbox("指定日期範圍", key="choose_date_range")
 

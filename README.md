@@ -73,6 +73,40 @@ Cloud:
 The Streamlit app uses the same scraper, pandas analysis, PNG outputs, retry
 logic, and request delay as the Flask dashboard.
 
+### Optional Email OTP login for testers
+
+The Streamlit app can be protected by an email one-time-password gate. It is
+disabled by default so a fresh deploy does not lock you out. To enable it, open
+Streamlit Community Cloud, go to **App settings > Secrets**, and add values like
+the ones in `.streamlit/secrets.example.toml`:
+
+```toml
+AUTH_ENABLED = true
+AUTH_ALLOWED_EMAILS = ["your-email@example.com"]
+ADMIN_PIN = "change-this-admin-pin"
+AUTH_OTP_SECRET = "change-this-long-random-secret"
+
+SMTP_HOST = "smtp.gmail.com"
+SMTP_PORT = 465
+SMTP_USERNAME = "your-email@gmail.com"
+SMTP_PASSWORD = "your-gmail-app-password"
+SMTP_FROM = "your-email@gmail.com"
+SMTP_SSL = true
+SMTP_STARTTLS = false
+```
+
+With Gmail, create an App Password and use that as `SMTP_PASSWORD`; do not use
+your normal Google password. After enabling auth:
+
+- Visitors enter an allowed email and receive a six-digit OTP.
+- The left sidebar has **測試名單管理**. Enter `ADMIN_PIN` to add or remove
+  temporary tester emails without redeploying.
+- Emails in `AUTH_ALLOWED_EMAILS` are the permanent starting whitelist. Emails
+  added in the sidebar are stored in runtime `auth_users.json`, which may reset
+  after a Streamlit Cloud redeploy or restart.
+- If you need to test before SMTP is configured, set `AUTH_DEBUG_OTP = true`.
+  This shows the OTP on screen and should be turned off before sharing the URL.
+
 The app also includes a **預告區**:
 
 - 下一期候選號碼：uses global frequency, recent frequency, and same-hour bias to produce
