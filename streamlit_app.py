@@ -568,6 +568,34 @@ def verified_draw_ids_from_details() -> set[str] | None:
     return set(verified.astype(str))
 
 
+def adaptive_backtest_plan(history_count: int) -> dict[str, int]:
+    if history_count < 60:
+        return {
+            "min_training_draws": 0,
+            "max_evaluation_draws": 0,
+            "default_evaluation_draws": 0,
+            "slider_min": 0,
+            "slider_step": 1,
+        }
+
+    min_training_draws = min(300, max(30, history_count // 2))
+    max_evaluation_draws = max(1, history_count - min_training_draws)
+    slider_step = 50 if max_evaluation_draws >= 100 else 10
+    slider_min = 50 if max_evaluation_draws >= 100 else 10
+    default_evaluation_draws = min(300, max_evaluation_draws)
+    default_evaluation_draws = (
+        slider_min
+        + ((default_evaluation_draws - slider_min) // slider_step) * slider_step
+    )
+    return {
+        "min_training_draws": min_training_draws,
+        "max_evaluation_draws": max_evaluation_draws,
+        "default_evaluation_draws": default_evaluation_draws,
+        "slider_min": slider_min,
+        "slider_step": slider_step,
+    }
+
+
 def show_prediction_backtest() -> None:
     backtest_builder = backtest_star_selection or fallback_backtest_star_selection
     if backtest_star_selection is None:
@@ -578,6 +606,19 @@ def show_prediction_backtest() -> None:
     except Exception:
         st.info("預測回測需要先有 bingo_history.csv。請先按「抓取並分析」。")
         return
+
+    plan = adaptive_backtest_plan(len(history))
+    if plan["max_evaluation_draws"] <= 0:
+        st.info(
+            f"目前只有 {len(history)} 期資料，至少累積 60 期後才能做基本回測。"
+        )
+        return
+    st.caption(
+        f"目前歷史資料 {len(history)} 期；前 {plan['min_training_draws']} 期作為訓練，"
+        f"最多可回測最近 {plan['max_evaluation_draws']} 期。"
+    )
+    if plan["min_training_draws"] < 300:
+        st.warning("資料量尚少，回測結果波動會很大，請先當成粗略健康檢查。")
 
     controls = st.columns(2)
     with controls[0]:
@@ -591,10 +632,10 @@ def show_prediction_backtest() -> None:
     with controls[1]:
         evaluation_draws = st.slider(
             "回測最近期數",
-            min_value=50,
-            max_value=500,
-            value=300,
-            step=50,
+            min_value=plan["slider_min"],
+            max_value=plan["max_evaluation_draws"],
+            value=plan["default_evaluation_draws"],
+            step=plan["slider_step"],
         )
 
     verified_ids = verified_draw_ids_from_details()
@@ -612,6 +653,7 @@ def show_prediction_backtest() -> None:
             history,
             stars=selected_stars,
             evaluation_draws=evaluation_draws,
+            min_training_draws=plan["min_training_draws"],
             verified_draw_ids=verified_ids if use_verified_only else None,
         )
     except Exception as exc:
