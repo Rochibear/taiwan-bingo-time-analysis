@@ -58,6 +58,7 @@ from bingo_analysis.daily_picks import (
     set_user_picks,
     validate_pick,
 )
+from bingo_analysis.hit_archive import archive_backtest_hits
 from bingo_analysis.crosscheck import (
     SOURCE_NOTE,
     CrosscheckConfig,
@@ -79,6 +80,7 @@ OFFICIAL_SUMMARY_PATH = OUTPUT_DIR / "official_verification_summary.json"
 OFFICIAL_DETAILS_PATH = OUTPUT_DIR / "official_verification.csv"
 SOURCE_CROSSCHECK_SUMMARY_PATH = OUTPUT_DIR / "source_crosscheck_summary.json"
 SOURCE_CROSSCHECK_DETAILS_PATH = OUTPUT_DIR / "source_crosscheck.csv"
+BACKTEST_HIT_ARCHIVE_PATH = OUTPUT_DIR / "backtest_hit_archive.csv"
 AUTH_USERS_PATH = DATA_DIR / "auth_users.json"
 DAILY_PICKS_PATH = DATA_DIR / "daily_picks.json"
 ANALYZE_COOLDOWN_KEY = "analyze_cooldown_until"
@@ -625,6 +627,25 @@ def backtest_table(details: pd.DataFrame) -> pd.DataFrame:
             "selected_numbers": "建議號碼",
             "hit_numbers": "命中號碼",
             "hit_count": "命中數",
+        }
+    )
+
+
+def hit_archive_table(details: pd.DataFrame) -> pd.DataFrame:
+    if details.empty:
+        return details
+    frame = details.copy()
+    return frame.rename(
+        columns={
+            "stars": "星數",
+            "draw_id": "期別",
+            "date": "開獎日期",
+            "time": "開獎時間",
+            "selected_numbers": "建議號碼",
+            "hit_numbers": "命中號碼",
+            "hit_count": "命中數",
+            "source": "來源",
+            "archived_at": "保存時間",
         }
     )
 
@@ -1408,6 +1429,42 @@ def show_prediction_backtest() -> None:
     )
 
     details = result["details"]
+    high_hits = details.sort_values(
+        ["hit_count", "date", "time"],
+        ascending=[False, False, False],
+    ).head(30)
+    high_hits = high_hits.loc[high_hits["hit_count"].astype(int) >= 5]
+    if not high_hits.empty:
+        st.markdown("#### 本次高命中排行")
+        st.dataframe(
+            backtest_table(high_hits),
+            hide_index=True,
+            use_container_width=True,
+        )
+
+    archive = archive_backtest_hits(
+        BACKTEST_HIT_ARCHIVE_PATH,
+        int(selected_stars),
+        details,
+        min_hits=5,
+    )
+    if not archive.empty:
+        st.markdown("#### 已保存高命中紀錄")
+        st.caption("自動保存命中 5 個以上的回測紀錄；避免只顯示最近 50 筆時被擠掉。")
+        st.dataframe(
+            hit_archive_table(archive.head(50)),
+            hide_index=True,
+            use_container_width=True,
+        )
+        st.download_button(
+            "下載高命中紀錄 CSV",
+            data=BACKTEST_HIT_ARCHIVE_PATH.read_bytes(),
+            file_name="backtest_hit_archive.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+    st.markdown("#### 最新回測明細")
     st.dataframe(
         backtest_table(details.tail(50)),
         hide_index=True,
